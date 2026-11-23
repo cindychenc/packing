@@ -71,10 +71,13 @@
 
   /* ───────────── toast + modal ───────────── */
   let toastTimer;
-  function toast(msg, bad) {
+  // toast(msg) · toast(msg, true) for errors · toast(msg, false, undoFn) adds an Undo button (shown longer)
+  function toast(msg, bad, undo) {
     const t = document.getElementById('toast');
-    t.textContent = msg; t.className = 'show' + (bad ? ' bad' : '');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, bad ? 5000 : 2600);
+    t.replaceChildren(h('span', null, msg));
+    if (undo) t.append(h('button', { type: 'button', onclick: () => { t.className = ''; undo(); } }, 'Undo'));
+    t.className = 'show' + (bad ? ' bad' : '') + (undo ? ' has-undo' : '');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, bad ? 5000 : undo ? 7000 : 2600);
   }
   function modal(build) {
     const scrim = h('div', { class: 'scrim', onmousedown: e => { if (e.target === scrim) close(); } });
@@ -237,49 +240,65 @@
       body));
   }
 
-  /* ───────────── trip dates form (new trip + change dates) ───────────── */
-  function dateFields(start, end) {
-    const s = h('input', { class: 'input', type: 'date', required: true, value: start || '' });
-    const e = h('input', { class: 'input', type: 'date', required: true, value: end || '' });
-    const count = h('div', { class: 'count' });
-    const check = () => {
-      count.classList.remove('bad');
-      if (s.value && (!e.value || e.value < s.value) && document.activeElement === s) e.min = s.value;
-      if (!s.value || !e.value) { count.textContent = ''; return false; }
-      const n = diffDays(s.value, e.value) + 1;
-      if (n < 1) { count.textContent = 'The end date is before the start date.'; count.classList.add('bad'); return false; }
-      if (n > MAX_DAYS) { count.textContent = 'A trip can be at most two years long.'; count.classList.add('bad'); return false; }
-      count.textContent = plural(n, 'day') + ' · ' + plural(n - 1, 'night');
-      return true;
-    };
-    s.addEventListener('input', () => { if (s.value && (!e.value || e.value < s.value)) e.value = s.value; check(); });
-    e.addEventListener('input', check);
-    check();
-    return { s, e, count, check,
-      nodes: [h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', null, 'Start'), s),
-                                       h('label', { class: 'field' }, h('span', null, 'End'), e)), count] };
-  }
-
+  // New trip pop-up (wireframe frames 2–3). "Not yet" = a length only; "Yes, I do" = start date + length.
+  const ROUGH = [['weekend', 'Weekend', 3], ['w1', '1 week', 7], ['w2', '2 weeks', 14], ['w3', '3 weeks', 21]];
   function newTripModal() {
+    const st = { mode: 'rough', unit: 'w1', months: 1, start: '', len: 21 };
     modal((box, close) => {
-      const name = h('input', { class: 'input', placeholder: 'e.g. Portugal in spring', maxlength: 80, required: true });
-      const dates = dateFields();
-      const create = h('button', { class: 'btn primary', type: 'submit' }, 'Create trip');
+      box.classList.add('newtrip');
       const err = h('div', { class: 'notice warn hidden' });
-      box.append(h('h2', null, 'New trip'), h('p', { class: 'lead' }, 'Start with a name and dates. Everything else comes after.'),
-        h('form', { onsubmit: async ev => {
+      const name = h('input', { class: 'input big-name', placeholder: 'Name your trip', maxlength: 80, 'aria-label': 'Trip name', oninput: () => err.classList.add('hidden') });
+      const body = h('div');
+      const create = h('button', { class: 'btn primary', type: 'submit' }, 'Start planning →');
+      const lengthOf = () => st.mode === 'exact' ? st.len : st.unit === 'month' ? st.months * 30 : ROUGH.find(r => r[0] === st.unit)[2];
+      const seg = (key, label) => h('button', { type: 'button', class: 'seg-btn' + (st.mode === key ? ' on' : ''), 'aria-pressed': String(st.mode === key),
+        onclick: () => { st.mode = key; draw(); if (key === 'exact') setTimeout(() => body.querySelector('input[type=date]').focus(), 20); } }, label);
+      const stepper = (val, label, onMinus, onPlus, minusOff, plusOff) => h('span', { class: 'stepper' },
+        h('button', { type: 'button', 'aria-label': 'Less', disabled: minusOff, onclick: e => { e.stopPropagation(); onMinus(); } }, '–'),
+        h('strong', null, label), h('button', { type: 'button', 'aria-label': 'More', disabled: plusOff, onclick: e => { e.stopPropagation(); onPlus(); } }, '+'));
+      function draw() {
+        let inner;
+        if (st.mode === 'rough') {
+          inner = h('div', { class: 'len-pills' },
+            ROUGH.map(r => h('button', { type: 'button', class: 'len-pill' + (st.unit === r[0] ? ' on' : ''), 'aria-pressed': String(st.unit === r[0]),
+              onclick: () => { st.unit = r[0]; draw(); } }, r[1])),
+            st.unit === 'month'
+              ? h('span', { class: 'len-pill on months' }, stepper(st.months, plural(st.months, 'month'),
+                  () => { st.months = Math.max(1, st.months - 1); draw(); }, () => { st.months = Math.min(24, st.months + 1); draw(); }, st.months <= 1, st.months >= 24))
+              : h('button', { type: 'button', class: 'len-pill', 'aria-pressed': 'false', onclick: () => { st.unit = 'month'; draw(); } }, 'Months'));
+        } else {
+          const date = h('input', { class: 'input', type: 'date', value: st.start, 'aria-label': 'Start date', oninput: e => { st.start = e.target.value; back.textContent = backText(); err.classList.add('hidden'); } });
+          const back = h('div', { class: 'back-on' });
+          const backText = () => st.start ? 'Back on ' + new Date(Date.UTC(...st.start.split('-').map((v, i) => i === 1 ? v - 1 : +v)) + (st.len - 1) * 864e5)
+            .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
+          back.textContent = backText();
+          inner = h('div', null, h('div', { class: 'exact-row' }, h('span', null, 'Starting'), date, h('span', null, 'for'),
+            stepper(st.len, plural(st.len, 'day'), () => { st.len = Math.max(1, st.len - 1); draw(); }, () => { st.len = Math.min(MAX_DAYS, st.len + 1); draw(); }, st.len <= 1, st.len >= MAX_DAYS)), back);
+        }
+        body.replaceChildren(
+          h('div', { class: 'q' }, 'Do you know your dates yet?'),
+          h('div', { class: 'seg' }, seg('rough', 'Not yet'), seg('exact', 'Yes, I do')),
+          inner,
+          h('div', { class: 'hint' }, 'You can change all of this later.'));
+      }
+      draw();
+      box.append(h('h2', null, 'New trip'),
+        h('form', { novalidate: true, onsubmit: async ev => {
           ev.preventDefault();
-          if (!name.value.trim()) { name.focus(); return; }
-          if (!dates.check()) return;
+          if (!name.value.trim()) { name.focus(); err.textContent = 'Give your trip a name.'; err.classList.remove('hidden'); return; }
+          if (st.mode === 'exact' && !st.start) { body.querySelector('input[type=date]').focus(); err.textContent = 'Pick a start date, or choose "Not yet".'; err.classList.remove('hidden'); return; }
+          err.classList.add('hidden');
           create.disabled = true; create.textContent = 'Creating…';
           const { data, error } = await sb.from('trips')
-            .insert({ name: name.value.trim(), start_date: dates.s.value, length_days: diffDays(dates.s.value, dates.e.value) + 1, owner_id: session.user.id })
+            .insert({ name: name.value.trim(), start_date: st.mode === 'exact' ? st.start : null, length_days: lengthOf(), owner_id: session.user.id })
             .select().single();
-          if (error) { err.textContent = errText(error); err.classList.remove('hidden'); create.disabled = false; create.textContent = 'Create trip'; return; }
+          if (error) { err.textContent = errText(error); err.classList.remove('hidden'); create.disabled = false; create.textContent = 'Start planning →'; return; }
           close(); location.hash = '#/trip/' + data.id;
         } },
-          h('label', { class: 'field' }, h('span', null, 'Trip name'), name), dates.nodes, err,
-          h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'), create)));
+          name, body, err,
+          h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'), create),
+          h('div', { class: 'import-row' }, h('div', null, h('strong', null, 'Already have a plan? Import it'), h('span', { class: 'soon-tag' }, 'Soon')),
+            h('div', { class: 'muted' }, 'Paste a Google Sheet or website link and we\'ll fill in your days, places and phases.'))));
     });
   }
 
@@ -303,7 +322,7 @@
 
   async function tripView(id, tab) {
     if (!tripData || tripData.trip.id !== id) {
-      loading(); selection = new Set(); anchor = null;
+      loading(); selection = new Set(); anchor = null; editingDates = false; settingStart = false;
       try { tripData = await loadTrip(id); }
       catch (e) { show(topbar(), h('main', null, h('div', { class: 'notice warn' }, 'Couldn\'t load this trip: ' + errText(e)))); return; }
       if (!tripData) {
@@ -345,7 +364,6 @@
 
     const menuBox = h('div', { class: 'menu hidden' },
       h('button', { onclick: () => { hideMenu(); renameModal(); } }, 'Rename'),
-      h('button', { onclick: () => { hideMenu(); datesModal(); } }, trip.start_date ? 'Change dates' : 'Set dates'),
       h('button', { onclick: () => { hideMenu(); toggleArchive(); } }, trip.archived ? 'Unarchive' : 'Archive'),
       h('hr'),
       h('button', { class: 'danger', onclick: () => { hideMenu(); deleteTrip(); } }, 'Delete trip'));
@@ -366,9 +384,11 @@
       h('main', null,
         h('div', { class: 'trip-head' },
           h('div', null, h('h1', null, trip.name),
-            h('div', { class: 'sub' }, (trip.start_date ? range(trip.start_date, trip.end_date) + ' · ' : '') + plural(total, 'day'),
-              h('span', { class: 'pill' + (when.startsWith('Day') ? ' now dot' : '') }, when),
+            h('div', { class: 'sub' }, h('span', { class: 'meta' }, metaText(trip)),
+              editingDates ? null : h('button', { class: 'link-btn', onclick: () => { editingDates = true; renderTrip(currentTab()); } }, 'Edit dates'),
+              trip.start_date ? h('span', { class: 'pill' + (when.startsWith('Day') ? ' now dot' : '') }, when) : null,
               trip.archived ? h('span', { class: 'pill' }, 'Archived') : null),
+            editingDates ? datesEditor() : null,
             trip.subtitle ? h('div', { class: 'muted', style: { marginTop: '4px' } }, trip.subtitle) : null),
           h('div', { class: 'spacer' }),
           h('div', { class: 'menu-wrap' }, menuBtn, menuBox)),
@@ -644,44 +664,64 @@
     });
   }
 
-  function datesModal() {
-    const t = tripData.trip;
-    modal((box, close) => {
-      const dates = dateFields(t.start_date, t.end_date);
-      const warn = h('div', { class: 'notice warn hidden' });
-      const save = h('button', { class: 'btn primary', type: 'submit' }, 'Save dates');
-      let confirmed = null;   // ids of days with content the user agreed to delete
-      box.append(h('h2', null, t.start_date ? 'Change dates' : 'Set dates'),
-        h('p', { class: 'lead' }, 'A new start date moves the whole trip; plans stay on their day of the trip. A shorter trip removes days from the end.'),
-        h('form', { onsubmit: async e => {
-          e.preventDefault();
-          if (!dates.check()) return;
-          const s = dates.s.value, len = diffDays(s, dates.e.value) + 1;
-          const outside = tripData.days.filter(d => d.idx >= len && (d.location || d.plan || d.notes));
-          if (outside.length && (!confirmed || confirmed.join() !== outside.map(d => d.id).join())) {
-            warn.textContent = plural(outside.length, 'day') + ' at the end of the trip ' + (outside.length === 1 ? 'has' : 'have') + ' plans: ' +
-              outside.slice(0, 6).map(dayName).join(', ') + (outside.length > 6 ? '…' : '') + '. Saving deletes ' + (outside.length === 1 ? 'it' : 'them') + '.';
-            warn.classList.remove('hidden');
-            save.textContent = 'Delete ' + plural(outside.length, 'day') + ' and save';
-            save.classList.replace('primary', 'danger');
-            confirmed = outside.map(d => d.id);
-            return;
-          }
-          save.disabled = true;
-          if (confirmed && confirmed.length) {
-            const { error } = await sb.from('days').delete().in('id', confirmed);
-            if (error) { save.disabled = false; return toast(errText(error), true); }
-          }
-          const { error } = await sb.from('trips').update({ start_date: s, length_days: len }).eq('id', t.id);
-          if (error) { save.disabled = false; return toast(/DAYS_WITH_CONTENT/.test(error.message) ? 'Some days at the end still have plans. Reload and try again.' : errText(error), true); }
-          close(); tripData = null; tripView(t.id, currentTab()); toast('Dates changed');
-        } }, dates.nodes, warn,
-          h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'), save)));
-      [dates.s, dates.e].forEach(inp => inp.addEventListener('input', () => {
-        confirmed = null; warn.classList.add('hidden'); save.textContent = 'Save dates'; save.classList.replace('danger', 'primary');
-      }));
-    });
+  /* ───────────── trip dates (header "Edit dates") ───────────── */
+  let editingDates = false;
+  const longDate = iso => pd(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  function metaText(t) {
+    if (!t.start_date) return plural(t.length_days, 'day') + ' · no dates yet';
+    return longDate(t.start_date) + ' – ' + longDate(t.end_date) + ', ' + pd(t.end_date).getUTCFullYear() + ' · ' + plural(t.length_days, 'day');
   }
+  // Save a change to the trip's start date / length, reload its days, show msg (with Undo when undoPatch is given).
+  async function patchTrip(patch, msg, undoPatch) {
+    const t = tripData.trip;
+    const { data, error } = await sb.from('trips').update(patch).eq('id', t.id).select().single();
+    if (error) { toast(/DAYS_WITH_CONTENT/.test(error.message) ? 'Some days at the end have plans. Reload and try again.' : errText(error), true); return false; }
+    const fresh = await loadTrip(t.id).catch(() => null);
+    if (fresh) tripData = fresh; else Object.assign(t, data);
+    renderTrip(currentTab());
+    if (msg) toast(msg, false, undoPatch ? () => patchTrip(undoPatch, 'Undone') : null);
+    return true;
+  }
+  function changeLength(n) {
+    const t = tripData.trip;
+    if (n < 1 || n > MAX_DAYS) return;
+    if (n > t.length_days) return patchTrip({ length_days: n }, 'Trip is now ' + plural(n, 'day') + ' · new day added at the end', { length_days: t.length_days });
+    const cut = tripData.days.filter(d => d.idx >= n);
+    const full = cut.filter(d => (d.location || '').trim() || (d.plan || '').trim() || (d.notes || '').trim());
+    if (!full.length) return patchTrip({ length_days: n }, 'Trip is now ' + plural(n, 'day'), { length_days: t.length_days });
+    confirmBox('Remove ' + full.map(dayName).join(', ') + '?', 'The last day of the trip has plans. Making the trip shorter deletes ' + (full.length === 1 ? 'it' : 'them') + '.',
+      'Delete and shorten', async () => {
+        const { error } = await sb.from('days').delete().in('id', full.map(d => d.id));
+        if (error) return toast(errText(error), true);
+        await patchTrip({ length_days: n }, 'Trip is now ' + plural(n, 'day'));
+      }, true);
+  }
+  function datesEditor() {
+    const t = tripData.trip;
+    const done = h('button', { class: 'btn small primary', onclick: () => { editingDates = false; renderTrip(currentTab()); } }, 'Done');
+    let startPart;
+    if (t.start_date) {
+      const inp = h('input', { class: 'input date-chip', type: 'date', value: t.start_date, 'aria-label': 'Start date',
+        onchange: e => { if (e.target.value && e.target.value !== t.start_date) patchTrip({ start_date: e.target.value }, 'Trip now starts ' + longDate(e.target.value), { start_date: t.start_date }); } });
+      startPart = h('span', { class: 'de-group' }, h('span', { class: 'de-label' }, 'Starts'), inp,
+        h('button', { class: 'link-btn', onclick: () => patchTrip({ start_date: null }, 'Start date removed · ' + plural(t.length_days, 'day') + ', no dates yet', { start_date: t.start_date }) }, 'Remove start date'));
+    } else if (settingStart) {
+      const inp = h('input', { class: 'input date-chip', type: 'date', 'aria-label': 'Day 1 date',
+        onchange: e => { if (e.target.value) { settingStart = false; patchTrip({ start_date: e.target.value }, 'Day 1 is ' + longDate(e.target.value), { start_date: null }); } } });
+      setTimeout(() => inp.focus(), 20);
+      startPart = h('span', { class: 'de-group' }, h('span', { class: 'de-label' }, 'Day 1 is'), inp,
+        h('button', { class: 'icon-x', 'aria-label': 'Cancel', onclick: () => { settingStart = false; renderTrip(currentTab()); } }, '×'));
+    } else {
+      startPart = h('button', { class: 'btn small', onclick: () => { settingStart = true; renderTrip(currentTab()); } }, 'Set start date');
+    }
+    const n = t.length_days;
+    const len = h('span', { class: 'stepper' },
+      h('button', { type: 'button', 'aria-label': 'One day less', disabled: n <= 1, onclick: () => changeLength(n - 1) }, '–'),
+      h('strong', null, plural(n, 'day')),
+      h('button', { type: 'button', 'aria-label': 'One day more', disabled: n >= MAX_DAYS, onclick: () => changeLength(n + 1) }, '+'));
+    return h('div', { class: 'dates-editor' }, startPart, h('span', { class: 'de-group' }, h('span', { class: 'de-label' }, 'Length'), len), h('div', { class: 'spacer' }), done);
+  }
+  let settingStart = false;
 
   async function toggleArchive() {
     const t = tripData.trip;

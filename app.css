@@ -293,6 +293,42 @@ details.archived summary::-webkit-details-marker { display: none; }
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.bad { background: var(--tobook); }
+#toast { display: flex; align-items: center; gap: 14px; }
+#toast.show.has-undo { pointer-events: auto; padding: 8px 8px 8px 18px; }
+#toast button { font: inherit; font-weight: 700; color: #fff; background: transparent; border: 1px solid rgba(255,255,255,.4); border-radius: 9px; height: 32px; padding: 0 12px; cursor: pointer; }
+#toast button:hover { background: rgba(255,255,255,.12); }
+
+/* ---------- new trip pop-up ---------- */
+.modal.newtrip { max-width: 560px; }
+.big-name { height: 56px; font-size: 22px; font-weight: 700; margin: 8px 0 18px; }
+.newtrip .q { font-weight: 600; margin-bottom: 8px; }
+.seg { display: inline-flex; background: var(--fill); border-radius: 12px; padding: 3px; gap: 2px; margin-bottom: 14px; }
+.seg-btn { font: inherit; font-weight: 600; border: 0; background: transparent; color: var(--text2); height: 36px; padding: 0 16px; border-radius: 10px; cursor: pointer; }
+.seg-btn.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.len-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.len-pill { font: inherit; font-weight: 600; height: 40px; padding: 0 16px; border-radius: 20px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; }
+.len-pill.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.len-pill.months { padding: 0 6px; }
+.stepper { display: inline-flex; align-items: center; gap: 8px; }
+.stepper button { font: inherit; font-size: 16px; width: 30px; height: 30px; border-radius: 15px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+.stepper button:disabled { opacity: .35; cursor: default; }
+.len-pill.on .stepper button { border-color: rgba(255,255,255,.4); background: transparent; color: #fff; }
+.exact-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.exact-row .input { width: auto; }
+.back-on { color: var(--text3); font-size: 13px; margin-top: 8px; min-height: 19px; }
+.newtrip .hint { color: var(--text3); font-size: 13px; margin: 14px 0 6px; }
+.import-row { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; font-size: 13px; }
+.import-row > div:first-child { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+
+/* ---------- trip header: Edit dates ---------- */
+.link-btn { font: inherit; font-size: 13px; border: 0; background: none; color: var(--text2); text-decoration: underline; cursor: pointer; padding: 0; }
+.link-btn:hover { color: var(--ink); }
+.dates-editor { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.dates-editor .spacer { flex: 1; }
+.de-group { display: inline-flex; align-items: center; gap: 8px; }
+.de-label { font-size: 12px; font-weight: 600; color: var(--text3); }
+.date-chip { width: auto; height: 36px; }
+.icon-x { font: inherit; font-size: 18px; width: 30px; height: 30px; border: 0; border-radius: 15px; background: var(--fill); cursor: pointer; }
 
 .loading { display: flex; align-items: center; justify-content: center; min-height: 50vh; color: var(--text3); }
 
