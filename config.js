@@ -6,5 +6,5 @@ window.SUITCASE_CONFIG = {
   supabaseKey: 'sb_publishable_sbJpxl4SAAQzNxpggX3_cQ_oDQjGm1c',
   carryonUrl: 'https://carryon.boringcase.com/',
   // Mapbox public token (pk.), limited in the Mapbox account to packing.boringcase.com and localhost:8000.
-  mapboxToken: ''
+  mapboxToken: 'pk.eyJ1Ijoidm9pbGExOTkwIiwiYSI6ImNtd3R1a3hhZjA0aG0yenB5aXMyYXRqcGwifQ.IpheDelKiOjeK05YeXXKiA'
 };
