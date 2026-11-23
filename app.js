@@ -812,7 +812,9 @@
     const row = tripData.phases.find(x => x.id === id);
     if (row) { row.name = v; row.auto_name = false; }
     // After any layout save still on its way, so an older layout can't put the old name back.
-    const { error } = await (layoutQueue = layoutQueue.then(() => sb.from('phases').update({ name: v, auto_name: false }).eq('id', id)));
+    let { error } = await (layoutQueue = layoutQueue.then(() => sb.from('phases').update({ name: v, auto_name: false }).eq('id', id)));
+    // Before migration 003 runs there is no auto_name column: save the name alone.
+    if (error && /auto_name/.test(error.message || '')) ({ error } = await sb.from('phases').update({ name: v }).eq('id', id));
     if (error) toast('Couldn\'t save the name: ' + errText(error), true);
     else if (tripData && currentTab() === 'planner' && document.querySelector('.planner')) renderTrip('planner');
   }
