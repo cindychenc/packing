@@ -139,4 +139,59 @@ t('dateAt', () => {
   assert.strictEqual(L.dateAt(null, 3), null);
 });
 
+
+// ───────── stops ─────────
+const locs = p => p.days.map(d => d.location);
+t('stops are runs of the same place; empty days are their own runs', () => {
+  const p = { days: [{ location: 'Tokyo' }, { location: ' tokyo ' }, { location: 'Kyoto' }, { location: null }, { location: null }] };
+  assert.deepStrictEqual(L.stopsOf(p).map(s => [s.place, s.start, s.n]), [['Tokyo', 0, 2], ['Kyoto', 2, 1], [null, 3, 1], [null, 4, 1]]);
+});
+t('first stop makes the first phase from the free days', () => {
+  const r = L.firstStop({ phases: [], free: days(14) }, 'Lima', 3);
+  assert.deepStrictEqual(lens(r.layout), [3]); assert.strictEqual(r.layout.free.length, 11);
+  assert.deepStrictEqual(locs(r.layout.phases[0]), ['Lima', 'Lima', 'Lima']);
+  assert.strictEqual(r.msg, 'Added Lima (3 nights)');
+});
+t('add stop to the last phase takes free days in order', () => {
+  let x = L.firstStop({ phases: [], free: days(10) }, 'Lima', 2).layout;
+  const r = L.addStop(x, 0, 'Cusco', 3);
+  assert.deepStrictEqual(locs(r.layout.phases[0]), ['Lima', 'Lima', 'Cusco', 'Cusco', 'Cusco']);
+  assert.strictEqual(r.layout.free.length, 5); assert.strictEqual(L.total(r.layout), 10);
+  assert.strictEqual(r.msg, 'Added Cusco (3 nights)');
+});
+t('add stop fills empty days at the end of the phase first', () => {
+  const x = trip(); x.phases[0].days[0].location = 'Tokyo'; x.phases[0].days[1].location = 'Tokyo';
+  const r = L.addStop(x, 0, 'Nikko', 2);
+  assert.deepStrictEqual(lens(r.layout), [4, 5, 3]);
+  assert.deepStrictEqual(locs(r.layout.phases[0]), ['Tokyo', 'Tokyo', 'Nikko', 'Nikko']);
+});
+t('add stop to a middle phase moves later phases and uses up free days', () => {
+  const x = trip(); x.phases[1].days.forEach(d => { d.location = 'Kyoto'; });
+  const r = L.addStop(x, 1, 'Nara', 2);
+  assert.deepStrictEqual(lens(r.layout), [4, 7, 3]); assert.strictEqual(r.layout.free.length, 7);
+  assert.strictEqual(r.msg, 'Added Nara (2 nights) · Hiroshima moved 2 days later');
+});
+t('longer stop inserts days right after it', () => {
+  let x = L.firstStop({ phases: [], free: days(10) }, 'Lima', 2).layout;
+  x = L.addStop(x, 0, 'Cusco', 2).layout;
+  const r = L.setStopNights(x, 0, 0, 4);
+  assert.deepStrictEqual(locs(r.layout.phases[0]), ['Lima', 'Lima', 'Lima', 'Lima', 'Cusco', 'Cusco']);
+  assert.strictEqual(L.total(r.layout), 10);
+  assert.strictEqual(r.msg, 'Lima +2 nights · everything after moved 2 days later');
+});
+t('shorter stop removes its last days and keeps the trip length', () => {
+  let x = L.firstStop({ phases: [], free: days(10) }, 'Lima', 3).layout;
+  x = L.addStop(x, 0, 'Cusco', 2).layout;
+  const r = L.setStopNights(x, 0, 0, 1);
+  assert.deepStrictEqual(locs(r.layout.phases[0]), ['Lima', 'Cusco', 'Cusco']);
+  assert.strictEqual(L.total(r.layout), 10);
+  assert.strictEqual(L.setStopNights(x, 0, 0, 0).error.indexOf('at least 1 night') > 0, true);
+});
+t('stops round-trip through toRows/fromRows', () => {
+  let x = L.firstStop({ phases: [], free: days(6) }, 'Lima', 2).layout;
+  x = L.addStop(x, 0, 'Cusco', 2).layout;
+  const rows = L.toRows(x); const back = L.fromRows(rows.phases, rows.days);
+  assert.deepStrictEqual(L.stopsOf(back.phases[0]).map(s => [s.place, s.n]), [['Lima', 2], ['Cusco', 2]]);
+});
+
 console.log(passed + ' layout tests passed' + (process.exitCode ? ' (some failed)' : ''));

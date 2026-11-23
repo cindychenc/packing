@@ -49,7 +49,7 @@
     if (bySort.join() !== named.join()) return bad('phases are not in sort order');
     if (seq.indexOf(null) >= 0 && seq.indexOf(null) !== seq.length - 1) return bad('days without a phase must come after the phases');
     const oldPh = db.phases.filter(p => p.trip_id === p_trip);
-    db.phases = db.phases.filter(p => p.trip_id !== p_trip).concat(p_phases.map(p => Object.assign({ created_at: now() },
+    db.phases = db.phases.filter(p => p.trip_id !== p_trip).concat(p_phases.map(p => Object.assign({ created_at: now(), auto_name: true },
       oldPh.find(o => o.id === p.id) || {}, p, { trip_id: p_trip, name: (p.name || '').trim() || null, updated_at: now() })));
     db.days = db.days.filter(d => d.trip_id !== p_trip).concat(p_days.map(d => ({ id: d.id, trip_id: p_trip, idx: d.idx, phase_id: d.phase_id || null,
       location: d.location || null, plan: d.plan || null, notes: d.notes || null })));
@@ -85,7 +85,7 @@
       } else if (q.op === 'insert') {
         const list = [].concat(q.payload).map(p => Object.assign({ id: uid(), created_at: now(), updated_at: now() },
           table === 'trips' ? { owner_id: user.id, archived: false, subtitle: null, start_date: null } : {},
-          table === 'phases' ? { photo_url: null, photo_credit: null, sort: 0 } : {}, p));
+          table === 'phases' ? { photo_url: null, photo_credit: null, sort: 0, auto_name: true } : {}, p));
         list.forEach(r => { rows.push(r); afterInsert(table, r); });
         data = list.map(r => Object.assign({}, r));
       } else if (q.op === 'update') {

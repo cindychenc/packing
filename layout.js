@@ -23,6 +23,7 @@
   const blankDay = () => ({ id: makeId(), location: null, plan: null, notes: null });
   const hasContent = d => !!((d.location || '').trim() || (d.plan || '').trim() || (d.notes || '').trim());
   const dd = n => n + (n === 1 ? ' day' : ' days');
+  const nn = n => n + (n === 1 ? ' night' : ' nights');
   const clone = L => ({ phases: L.phases.map(p => Object.assign({}, p, { days: p.days.slice() })), free: L.free.slice() });
   const total = L => L.phases.reduce((a, p) => a + p.days.length, 0) + L.free.length;
 
@@ -148,6 +149,97 @@
     return { layout: c, msg: 'Trip is now ' + dd(n), removed: gone, removedWithContent: gone.filter(hasContent) };
   }
 
+
+  /* ───────── stops ─────────
+     A stop is a run of back-to-back days in one phase with the same place. Stops are worked out, not stored.
+     Days without a place are "free days" inside the phase; each one is its own run with place null. */
+  const placeKey = d => (d.location || '').trim().toLowerCase();
+  function stopsOf(phase) {
+    const out = [];
+    phase.days.forEach((d, j) => {
+      const k = placeKey(d); const prev = out[out.length - 1];
+      if (k && prev && prev.key === k) prev.n++;
+      else out.push({ key: k, place: k ? d.location.trim() : null, start: j, n: 1 });
+    });
+    return out;
+  }
+
+  /* Put count new days into phase i at position at (0…days.length), all at place loc.
+     The trip keeps its length when it can: adding at the end of the last phase takes the next free day;
+     anywhere else uses up an empty day from the end of the trip. With no empty day left, the trip gets longer. */
+  function growAt(c, i, at, count, loc) {
+    const last = i === c.phases.length - 1; let grew = 0; const add = [];
+    for (let k = 0; k < count; k++) {
+      let day;
+      if (last && at === c.phases[i].days.length && c.free.length && !hasContent(c.free[0])) day = Object.assign({}, c.free.shift());
+      else { day = blankDay(); if (!popEmptyFree(c)) grew++; }
+      day.location = loc; add.push(day);
+    }
+    c.phases[i].days.splice(at, 0, ...add);
+    return grew;
+  }
+
+  /* Add a stop at the end of phase i: nights days at place. Empty days at the end of the phase are filled first. */
+  function addStop(L, i, place, nights) {
+    const loc = (place || '').trim();
+    if (!loc) return { error: 'Type a place first' };
+    if (!(nights >= 1)) return { error: 'A stop needs at least 1 night' };
+    const c = clone(L); const p = c.phases[i]; const later = listNames(c, i + 1);
+    let fill = 0;
+    while (fill < nights) {
+      const j = p.days.length - 1 - fill;
+      if (j < 0 || hasContent(p.days[j])) break;
+      fill++;
+    }
+    // fill the trailing empty days (earliest first), then grow
+    const from = p.days.length - fill;
+    for (let j = from; j < p.days.length; j++) p.days[j] = Object.assign({}, p.days[j], { location: loc });
+    const more = nights - fill; const grew = more > 0 ? growAt(c, i, p.days.length, more, loc) : 0;
+    if (total(c) > MAX_DAYS) return { error: 'A trip can be at most ' + MAX_DAYS + ' days' };
+    let msg = 'Added ' + loc + ' (' + nn(nights) + ')';
+    if (more && later) msg += ' · ' + later + ' moved ' + dd(more) + ' later';
+    if (grew) msg += ' · trip is now ' + dd(total(c));
+    return { layout: c, msg };
+  }
+
+  /* First stop of an empty trip: a new phase at the start made of nights days at place. */
+  function firstStop(L, place, nights) {
+    const loc = (place || '').trim();
+    if (!loc) return { error: 'Type a place first' };
+    const r = insertPhaseAt(L, L.phases.length, nights);
+    if (r.error) return r;
+    const i = r.phaseIndex; r.layout.phases[i].days = r.layout.phases[i].days.map(d => Object.assign({}, d, { location: loc }));
+    let msg = 'Added ' + loc + ' (' + nn(nights) + ')';
+    if (total(r.layout) > total(L)) msg += ' · trip is now ' + dd(total(r.layout));
+    return { layout: r.layout, msg, phaseIndex: i };
+  }
+
+  /* Change the stop that starts at day j of phase i to nights days.
+     Longer: new days go right after the stop (later stops and phases move later).
+     Shorter: its last days are removed and the trip keeps its length (empty days go to the days to plan). */
+  function setStopNights(L, i, j, nights) {
+    const st = stopsOf(L.phases[i]).find(x => x.start === j);
+    if (!st || !st.place) return { error: 'No stop there' };
+    if (!(nights >= 1)) return { error: 'A stop needs at least 1 night · remove its days to delete it' };
+    const d = nights - st.n; if (!d) return { layout: clone(L), msg: '' };
+    const c = clone(L); const later = listNames(c, i + 1); const name = st.place;
+    if (d > 0) {
+      const grew = growAt(c, i, st.start + st.n, d, st.place);
+      if (total(c) > MAX_DAYS) return { error: 'A trip can be at most ' + MAX_DAYS + ' days' };
+      let msg = name + ' +' + nn(d);
+      const after = c.phases[i].days.length > st.start + nights;
+      if (after || later) msg += ' · everything after moved ' + dd(d) + ' later';
+      if (grew) msg += ' · trip is now ' + dd(total(c));
+      return { layout: c, msg };
+    }
+    const last = i === c.phases.length - 1; const cut = -d;
+    c.phases[i].days.splice(st.start + nights, cut);
+    for (let k = 0; k < cut; k++) { if (last) c.free.unshift(blankDay()); else c.free.push(blankDay()); }
+    let msg = name + ' −' + nn(cut);
+    if (c.phases[i].days.length > st.start + nights || later) msg += ' · everything after moved ' + dd(cut) + ' earlier';
+    return { layout: c, msg };
+  }
+
   /* ───────── rows ↔ layout ───────── */
 
   /* From database rows (phases with sort, days with idx/phase_id) to a layout.
@@ -186,7 +278,7 @@
   }
 
   const api = { MAX_DAYS, PALETTE, setIdMaker, blankDay, hasContent, total, suggestion, nameOf, nextColour,
-    insertPhaseAt, resizePhase, addDayToPhase, removeDay, removePhase, movePhase, setTripLength,
+    insertPhaseAt, resizePhase, stopsOf, addStop, firstStop, setStopNights, addDayToPhase, removeDay, removePhase, movePhase, setTripLength,
     fromRows, toRows, startIdx, dateAt, clone };
   root.SuitcaseLayout = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
