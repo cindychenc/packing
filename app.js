@@ -113,7 +113,7 @@
       session ? h('span', { class: 'user-chip' }, session.user.email) : null,
       session ? h('button', { class: 'btn ghost small', onclick: signOut }, 'Sign out') : null);
   }
-  function show(...nodes) { app.replaceChildren(...nodes); window.scrollTo(0, 0); }
+  function show(...nodes) { app.replaceChildren(...nodes); window.scrollTo(0, 0); delete app.dataset.trip; }
   function loading() { show(topbar(), h('div', { class: 'loading' }, 'Loading…')); }
 
   /* ───────────── sign in ───────────── */
@@ -252,7 +252,7 @@
       const create = h('button', { class: 'btn primary', type: 'submit' }, 'Start planning →');
       const lengthOf = () => st.mode === 'exact' ? st.len : st.unit === 'month' ? st.months * 30 : ROUGH.find(r => r[0] === st.unit)[2];
       const seg = (key, label) => h('button', { type: 'button', class: 'seg-btn' + (st.mode === key ? ' on' : ''), 'aria-pressed': String(st.mode === key),
-        onclick: () => { st.mode = key; draw(); if (key === 'exact') setTimeout(() => body.querySelector('input[type=date]').focus(), 20); } }, label);
+        onclick: () => { st.mode = key; draw(); if (key === 'exact' && name.value.trim()) body.querySelector('input[type=date]').focus(); } }, label);
       const stepper = (val, label, onMinus, onPlus, minusOff, plusOff) => h('span', { class: 'stepper' },
         h('button', { type: 'button', 'aria-label': 'Less', disabled: minusOff, onclick: e => { e.stopPropagation(); onMinus(); } }, '–'),
         h('strong', null, label), h('button', { type: 'button', 'aria-label': 'More', disabled: plusOff, onclick: e => { e.stopPropagation(); onPlus(); } }, '+'));
@@ -354,6 +354,14 @@
   const dot = c => 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="' + (c || '#C9C9C9') + '"/></svg>') + '")';
 
   function renderTrip(tab) {
+    // Redrawing the same trip keeps the page (and the phase columns) where they were scrolled to.
+    const same = app.dataset.trip === tripData.trip.id && app.dataset.tab === tab;
+    const sy = window.scrollY, pm = document.querySelector('.planner-main'), sx = pm ? pm.scrollLeft : 0;
+    drawTrip(tab);
+    app.dataset.trip = tripData.trip.id; app.dataset.tab = tab;
+    if (same) { window.scrollTo(0, sy); const pm2 = document.querySelector('.planner-main'); if (pm2) pm2.scrollLeft = sx; }
+  }
+  function drawTrip(tab) {
     const { trip, days } = tripData;
     const total = days.length, today = todayIso();
     let when;
@@ -369,14 +377,15 @@
       h('button', { class: 'danger', onclick: () => { hideMenu(); deleteTrip(); } }, 'Delete trip'));
     const hideMenu = () => menuBox.classList.add('hidden');
     const menuBtn = h('button', { class: 'icon-btn', 'aria-label': 'Trip menu', onclick: e => { e.stopPropagation(); menuBox.classList.toggle('hidden'); } }, svg(ICON.more));
-    document.onclick = () => hideMenu();
+    document.onclick = () => { hideMenu(); if (openMenu) { openMenu = null; document.querySelectorAll('.pmenu').forEach(m => m.classList.add('hidden')); } };
 
     const counts = [];
     days.forEach(d => { const last = counts[counts.length - 1]; if (last && last.id === (d.phase_id || '')) last.n++; else counts.push({ id: d.phase_id || '', n: 1 }); });
     const used = orderedPhases().filter(p => phaseSpan(p));
 
     const tabs = h('nav', { class: 'tabs' },
-      h('a', { class: 'tab' + (tab === 'itinerary' ? ' on' : ''), href: '#/trip/' + trip.id }, 'Itinerary'),
+      h('a', { class: 'tab' + (tab === 'planner' ? ' on' : ''), href: '#/trip/' + trip.id }, 'Planner'),
+      h('a', { class: 'tab' + (tab === 'itinerary' ? ' on' : ''), href: '#/trip/' + trip.id + '/itinerary' }, 'Itinerary'),
       h('a', { class: 'tab' + (tab === 'phases' ? ' on' : ''), href: '#/trip/' + trip.id + '/phases' }, 'Phases'),
       ['Bookings', 'Checklist', 'Share'].map(n => h('span', { class: 'tab soon', title: 'Coming soon' }, n, h('span', { class: 'soon-tag' }, 'Soon'))));
 
@@ -392,7 +401,7 @@
             trip.subtitle ? h('div', { class: 'muted', style: { marginTop: '4px' } }, trip.subtitle) : null),
           h('div', { class: 'spacer' }),
           h('div', { class: 'menu-wrap' }, menuBtn, menuBox)),
-        used.length ? [
+        used.length && tab !== 'planner' ? [
           h('div', { class: 'phase-bar', 'aria-hidden': 'true' }, counts.map(c => {
             const p = c.id && phaseById(c.id);
             return h('span', { style: { flex: c.n, background: p ? p.colour || '#C9C9C9' : 'transparent' }, title: p ? pname(p) : '' });
@@ -400,7 +409,7 @@
           h('div', { class: 'phase-legend' }, used.map(p => h('span', null, h('i', { style: { background: p.colour || '#C9C9C9' } }), pname(p))))
         ] : null,
         tabs,
-        tab === 'phases' ? phasesTab() : itineraryTab()));
+        tab === 'phases' ? phasesTab() : tab === 'planner' ? plannerTab() : itineraryTab()));
   }
 
   /* ───────────── Itinerary tab ───────────── */
@@ -414,6 +423,15 @@
   async function saveDays(rows) {
     pending++; setSave('saving', 'Saving…');
     const { error } = await sb.from('days').upsert(rows, { onConflict: 'id' });
+    pending--;
+    if (error) { setSave('error', 'Not saved'); toast('Couldn\'t save: ' + errText(error), true); return false; }
+    if (!pending) setSave('saved', 'All changes saved');
+    return true;
+  }
+  // Save one or two fields of a day (the Planner's typing). Never touches its position or phase.
+  async function saveDayField(id, patch) {
+    pending++; setSave('saving', 'Saving…');
+    const { error } = await sb.from('days').update(patch).eq('id', id);
     pending--;
     if (error) { setSave('error', 'Not saved'); toast('Couldn\'t save: ' + errText(error), true); return false; }
     if (!pending) setSave('saved', 'All changes saved');
@@ -645,6 +663,284 @@
       h('p', { class: 'phase-hint' }, 'A phase\'s dates come from its days. To change them, go to Itinerary, tick the days and choose the phase.'));
   }
 
+  /* ───────────── Planner tab (wireframe frames 4–7) ─────────────
+     The trip as phases (columns) + days not planned yet (the tray). Structural changes go through layout.js and
+     apply_layout() in one call, with an Undo toast; typing in a day saves that day only. */
+  const PLACEHOLDER_IDEAS = ['Patagonia', 'Tuscany', 'Kyoto', 'the Dolomites', 'Pacific Coast Highway'];
+  let layoutQueue = Promise.resolve();
+  let typeTimer = null;
+  let barHover = null;      // free-day index hovered in the trip bar or tray
+  let openMenu = null;      // phase id whose ••• menu is open
+
+  function currentLayout() { return LAYOUT.fromRows(tripData.phases, tripData.days); }
+
+  // Put a layout into tripData (so the screen updates at once) and save it with apply_layout().
+  function commitLayout(next, msg, opts) {
+    opts = opts || {};
+    const prev = currentLayout();
+    const t = tripData.trip, tripId = t.id;
+    const rows = LAYOUT.toRows(next);
+    const oldPhases = tripData.phases;
+    tripData.phases = rows.phases.map(p => Object.assign({}, oldPhases.find(o => o.id === p.id) || {}, p, { trip_id: tripId }));
+    tripData.days = rows.days.map(d => Object.assign({ trip_id: tripId }, d));
+    t.length_days = tripData.days.length;
+    t.end_date = t.start_date ? LAYOUT.dateAt(t.start_date, t.length_days - 1) : null;
+    datesFor(t, tripData.days);
+    renderTrip(currentTab());
+    layoutQueue = layoutQueue.then(async () => {
+      if (!tripData || tripData.trip.id !== tripId) return;
+      setSave('saving', 'Saving…');
+      const { data, error } = await sb.rpc('apply_layout', { p_trip: tripId, p_expect: tripData.trip.updated_at, p_phases: rows.phases, p_days: rows.days });
+      if (error) {
+        setSave('error', 'Not saved');
+        if (/LAYOUT_CHANGED/.test(error.message)) {
+          toast('This trip was changed somewhere else, so it was reloaded.', true);
+          tripData = null; tripView(tripId, currentTab());
+        } else {
+          toast('Couldn\'t save: ' + errText(error), true);
+          commitLayout(prev, '', { quiet: true, noUndo: true });
+        }
+        return;
+      }
+      tripData.trip.updated_at = data;
+      setSave('saved', 'All changes saved');
+    });
+    if (!opts.quiet && msg) toast(msg, false, opts.noUndo ? null : () => commitLayout(prev, 'Undone', { noUndo: true }));
+  }
+  function tryLayout(res) {
+    if (res.error) { toast(res.error, true); return null; }
+    commitLayout(res.layout, res.msg);
+    return res;
+  }
+
+  function plannerTab() {
+    const L = currentLayout(), t = tripData.trip;
+    const dateAt = idx => LAYOUT.dateAt(t.start_date, idx);
+    const shortDay = idx => (t.start_date ? md(dateAt(idx)) : 'Day ' + (idx + 1));
+    const span = (a, b) => (a === b ? shortDay(a) : shortDay(a) + ' – ' + shortDay(b));
+    const freeStart = L.phases.reduce((a, p) => a + p.days.length, 0);
+    saveState = h('span', { class: 'save-state saved' }, 'All changes saved');
+    const newPhaseUpTo = k => tryLayout(LAYOUT.insertPhaseAt(currentLayout(), currentLayout().phases.length, k + 1));
+    const nameFocus = i => setTimeout(() => { const el = document.querySelectorAll('.pcol .pname')[i]; if (el) el.focus(); }, 30);
+
+    /* trip bar */
+    const bar = h('div', { class: 'tripbar' });
+    const hintText = L.free.length ? 'Drag a phase\'s right edge to change its length · drag a phase to reorder · click a free day to start a new phase' : 'Drag a phase\'s right edge to change its length · drag a phase to reorder';
+    const hint = h('div', { class: 'tripbar-hint' }, L.phases.length || !L.free.length ? hintText : 'Click a day to start your first phase there');
+    L.phases.forEach((p, i) => {
+      const block = h('div', { class: 'tb-phase', style: { flex: p.days.length, background: p.colour || '#C9C9C9' }, title: LAYOUT.nameOf(L, i) },
+        h('span', { class: 'tb-label' }, LAYOUT.nameOf(L, i) + ' · ' + p.days.length),
+        h('span', { class: 'tb-edge', title: 'Drag to change the length' }));
+      block.addEventListener('pointerdown', e => barDrag(e, i, block, bar, L));
+      bar.append(block);
+    });
+    if (L.free.length) {
+      const free = h('div', { class: 'tb-free', style: { flex: L.free.length } });
+      L.free.forEach((d, k) => free.append(h('button', { class: 'tb-day' + (barHover !== null && k <= barHover ? ' hot' : ''), 'aria-label': 'New phase up to ' + shortDay(freeStart + k),
+        onmouseenter: () => { barHover = k; paintHover(); }, onmouseleave: () => { barHover = null; paintHover(); },
+        onclick: () => { barHover = null; if (newPhaseUpTo(k)) nameFocus(L.phases.length); } })));
+      free.append(h('span', { class: 'tb-free-label' }, plural(L.free.length, 'more day') + ' to plan'));
+      bar.append(free);
+    }
+    const tip = h('div', { class: 'tb-tip hidden' });
+    function paintHover() {
+      document.querySelectorAll('.tb-day').forEach((el, k) => el.classList.toggle('hot', barHover !== null && k <= barHover));
+      document.querySelectorAll('.tray-day').forEach((el, k) => el.classList.toggle('hot', barHover !== null && k <= barHover));
+      const th = document.querySelector('.tray-hint');
+      if (barHover === null) { hint.textContent = L.phases.length || !L.free.length ? hintText : 'Click a day to start your first phase there'; hint.classList.remove('hot'); if (th) th.textContent = trayHint; }
+      else {
+        hint.textContent = '+ New phase · ' + plural(barHover + 1, 'day') + ' · ' + span(freeStart, freeStart + barHover); hint.classList.add('hot');
+        if (th) th.textContent = span(freeStart, freeStart + barHover) + ' · click to plan up to here';
+        const tt = document.querySelector('.tray-title.empty-title');
+        if (tt) tt.textContent = 'Let\'s plan the first ' + plural(barHover + 1, 'day');
+      }
+      if (barHover === null) { const tt = document.querySelector('.tray-title.empty-title'); if (tt) tt.textContent = 'Let\'s plan the first few days'; }
+    }
+
+    /* tray: days not in a phase yet */
+    const trayHint = L.phases.length ? 'Click the day your next phase ends' : 'Pick a day — we\'ll plan your first steps up to there';
+    let tray = null;
+    if (L.free.length) {
+      const CAP = 42, shown = L.free.slice(0, CAP);
+      tray = h('aside', { class: 'tray' + (L.phases.length ? '' : ' alone') },
+        L.phases.length ? h('div', { class: 'tray-title' }, plural(L.free.length, 'more day') + ' to plan')
+                        : h('div', { class: 'tray-title empty-title' }, 'Let\'s plan the first few days'),
+        h('div', { class: 'tray-hint' }, trayHint),
+        h('div', { class: 'tray-grid' }, shown.map((d, k) => {
+          const idx = freeStart + k;
+          return h('button', { class: 'tray-day', 'aria-label': 'Plan up to ' + shortDay(idx),
+            onmouseenter: () => { barHover = k; paintHover(); }, onmouseleave: () => { barHover = null; paintHover(); },
+            onclick: () => { barHover = null; if (newPhaseUpTo(k)) nameFocus(L.phases.length); } },
+            t.start_date ? [h('span', { class: 'wd' }, wd(dateAt(idx)).toUpperCase()), h('strong', null, pd(dateAt(idx)).getUTCDate())]
+                         : [h('span', { class: 'wd' }, 'DAY'), h('strong', null, idx + 1)]);
+        }), L.free.length > CAP ? h('span', { class: 'tray-more' }, '+ ' + (L.free.length - CAP) + ' more') : null));
+    }
+
+    /* phase columns */
+    let cols = null;
+    if (L.phases.length) {
+      cols = h('div', { class: 'phasecard' }, L.phases.map((p, i) => phaseColumn(L, p, i, { shortDay, span })));
+    }
+
+    clearInterval(typeTimer);
+    let tick = 0;
+    typeTimer = setInterval(() => {
+      const inputs = document.querySelectorAll('.pcol .pname');
+      if (!inputs.length) return clearInterval(typeTimer);
+      tick++;
+      inputs.forEach((el, i) => { if (!el.value) el.placeholder = typedPlaceholder(i, tick); });
+    }, 90);
+
+    return h('section', { class: 'planner' },
+      h('div', { class: 'planner-top' }, h('div', { class: 'tripbar-wrap' }, bar, tip), h('div', { class: 'planner-meta' }, hint, saveState)),
+      h('div', { class: 'planner-main' + (L.phases.length ? '' : ' no-phases') }, cols, tray));
+  }
+
+  // "First area to explore", then example regions, typed out one letter at a time.
+  function typedPlaceholder(i, tick) {
+    const words = [LAYOUT.suggestion(i)].concat(PLACEHOLDER_IDEAS.map(w => 'e.g. ' + w));
+    const lives = words.map(w => w.length + 18);      // type it out, hold, then the next one
+    let n = tick % lives.reduce((a, b) => a + b, 0);
+    for (let k = 0; k < words.length; k++) {
+      if (n < lives[k]) return words[k].slice(0, Math.min(words[k].length, n + 1));
+      n -= lives[k];
+    }
+    return words[0];
+  }
+
+  function phaseColumn(L, p, i, fmt) {
+    const start = LAYOUT.startIdx(L, i), n = p.days.length;
+    const name = h('input', { class: 'pname', value: p.name || '', placeholder: LAYOUT.suggestion(i), maxlength: 60, 'aria-label': 'Phase ' + (i + 1) + ' name' });
+    name.addEventListener('change', async () => {
+      const v = name.value.trim() || null;
+      const row = tripData.phases.find(x => x.id === p.id);
+      if (row) row.name = v;
+      const { error } = await sb.from('phases').update({ name: v }).eq('id', p.id);
+      if (error) toast('Couldn\'t save the name: ' + errText(error), true);
+      else document.querySelectorAll('.tb-phase .tb-label')[i] && (document.querySelectorAll('.tb-phase .tb-label')[i].textContent = (v || LAYOUT.suggestion(i)) + ' · ' + n);
+    });
+    name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+
+    const menu = h('div', { class: 'menu pmenu' + (openMenu === p.id ? '' : ' hidden') },
+      h('button', { disabled: i === 0, onclick: () => { openMenu = null; tryLayout(LAYOUT.movePhase(currentLayout(), i, i - 1)); } }, 'Move left'),
+      h('button', { disabled: i === L.phases.length - 1, onclick: () => { openMenu = null; tryLayout(LAYOUT.movePhase(currentLayout(), i, i + 1)); } }, 'Move right'),
+      h('button', { onclick: () => { openMenu = null; colourPhotoModal(p.id); } }, 'Colour & photo…'),
+      h('hr'),
+      h('button', { class: 'danger', onclick: () => { openMenu = null; tryLayout(LAYOUT.removePhase(currentLayout(), i)); } }, 'Delete phase'));
+    const more = h('button', { class: 'icon-btn small', 'aria-label': 'More for ' + LAYOUT.nameOf(L, i), onclick: e => {
+      e.stopPropagation(); const open = menu.classList.contains('hidden');
+      document.querySelectorAll('.pmenu').forEach(m => m.classList.add('hidden')); menu.classList.toggle('hidden', !open); openMenu = open ? p.id : null; } }, svg(ICON.more));
+
+    const days = p.days.map((d, j) => dayCard(L, p, i, j, start + j, fmt));
+    return h('section', { class: 'pcol', 'data-phase': p.id },
+      h('div', { class: 'pcol-head' }, h('i', { class: 'pdot', style: { background: p.colour || '#C9C9C9' } }), name, h('div', { class: 'menu-wrap' }, more, menu)),
+      h('div', { class: 'pcol-info' }, plural(n, 'day') + ' · ' + fmt.span(start, start + n - 1)),
+      h('div', { class: 'daylist' }, days,
+        h('button', { class: 'add-day', onclick: () => tryLayout(LAYOUT.addDayToPhase(currentLayout(), i)) }, '+ Add a day')));
+  }
+
+  function dayCard(L, p, i, j, idx, fmt) {
+    const d = p.days[j];
+    const row = tripData.days.find(x => x.id === d.id);
+    const t = tripData.trip;
+    const date = LAYOUT.dateAt(t.start_date, idx);
+    const prev = j > 0 ? p.days[j - 1] : null;
+    // "↓ Kyoto again": only on the first empty day right after a day with a place
+    const again = !d.location && prev && prev.location ? prev.location : null;
+    const save = (field, v) => {
+      if (!row) return;
+      row[field] = v || null;
+      clearTimeout(row['_t' + field]); row['_t' + field] = setTimeout(() => saveDayField(row.id, { [field]: v || null }), 500);
+    };
+    const loc = h('input', { class: 'dloc', value: d.location || '', placeholder: 'Where are you?', 'aria-label': 'Where are you on ' + fmt.shortDay(idx) });
+    const plan = h('input', { class: 'dplan', value: d.plan || '', placeholder: 'Start planning', 'aria-label': 'Plan for ' + fmt.shortDay(idx) });
+    const planWrap = h('div', { class: d.location ? '' : 'hidden' }, plan);
+    loc.addEventListener('input', () => { save('location', loc.value.trim()); planWrap.classList.toggle('hidden', !loc.value.trim()); });
+    // When the place changes, redraw (plan field, "↓ … again" hints, phase info) but keep the cursor where the user went.
+    let locChanged = false;
+    loc.addEventListener('change', () => { locChanged = true; });
+    loc.addEventListener('blur', e => {
+      if (!locChanged) return;
+      const next = e.relatedTarget && e.relatedTarget.getAttribute('aria-label');
+      setTimeout(() => { renderTrip(currentTab()); if (next) { const el = document.querySelector('[aria-label="' + next.replace(/"/g, '\\"') + '"]'); if (el) el.focus(); } }, 0);
+    });
+    plan.addEventListener('input', () => save('plan', plan.value.trim()));
+    [loc, plan].forEach(el => el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); }));
+    return h('div', { class: 'dcard' },
+      h('div', { class: 'dtile' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]),
+      h('div', { class: 'dbody' }, loc,
+        again ? h('button', { class: 'again', onclick: () => { save('location', again); renderTrip(currentTab()); } }, '↓ ' + again + ' again') : null,
+        planWrap),
+      h('button', { class: 'dx', 'aria-label': 'Remove ' + fmt.shortDay(idx), title: 'Remove this day', onclick: () => tryLayout(LAYOUT.removeDay(currentLayout(), i, j)) }, '×'));
+  }
+
+  // Trip bar dragging: the right edge changes a phase's length; the block itself reorders. A click jumps to the column.
+  function barDrag(e, i, block, bar, L) {
+    if (e.button !== 0) return;
+    const edge = e.target.classList.contains('tb-edge');
+    const total = LAYOUT.total(L), dayW = bar.getBoundingClientRect().width / total;
+    const x0 = e.clientX; let moved = false, delta = 0, target = i;
+    const w0 = block.getBoundingClientRect().width;
+    block.setPointerCapture(e.pointerId);
+    const onMove = ev => {
+      const dx = ev.clientX - x0;
+      if (!moved && Math.abs(dx) < 5) return;
+      moved = true;
+      if (edge) {
+        delta = Math.max(1 - L.phases[i].days.length, Math.round(dx / dayW));
+        block.style.flex = 'none'; block.style.width = Math.max(dayW, w0 + delta * dayW) + 'px';
+        block.querySelector('.tb-label').textContent = LAYOUT.nameOf(L, i) + ' · ' + (L.phases[i].days.length + delta);
+      } else {
+        block.style.transform = 'translateX(' + dx + 'px)'; block.classList.add('dragging');
+        const blocks = [...bar.querySelectorAll('.tb-phase')];
+        const cx = ev.clientX;
+        target = blocks.reduce((best, b, k) => { const r = b.getBoundingClientRect(); return cx > r.left + r.width / 2 ? k : best; }, 0);
+        if (cx < blocks[0].getBoundingClientRect().left + blocks[0].getBoundingClientRect().width / 2) target = 0;
+      }
+    };
+    const onUp = () => {
+      block.removeEventListener('pointermove', onMove); block.removeEventListener('pointerup', onUp);
+      if (!moved) {
+        const col = document.querySelectorAll('.pcol')[i];
+        if (col) col.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        return;
+      }
+      if (edge) { if (delta) tryLayout(LAYOUT.resizePhase(currentLayout(), i, delta)); else renderTrip(currentTab()); }
+      else { if (target !== i) tryLayout(LAYOUT.movePhase(currentLayout(), i, target)); else renderTrip(currentTab()); }
+    };
+    block.addEventListener('pointermove', onMove); block.addEventListener('pointerup', onUp);
+  }
+
+  // Colour & photo for a phase (from its ••• menu).
+  function colourPhotoModal(phaseId) {
+    const p = tripData.phases.find(x => x.id === phaseId);
+    if (!p) return;
+    modal((box, close) => {
+      let colour = (p.colour || '').toUpperCase();
+      const sw = h('div', { class: 'cp-swatches' });
+      const drawSw = () => sw.replaceChildren(...PALETTE.map(([label, c]) => h('button', { type: 'button', title: label, 'aria-label': label,
+        'aria-pressed': String(colour === c), class: colour === c ? 'on' : '', style: { background: c }, onclick: () => { colour = c; drawSw(); } })));
+      drawSw();
+      const url = h('input', { class: 'input', type: 'url', placeholder: 'https://…', value: p.photo_url || '' });
+      const credit = h('input', { class: 'input', placeholder: 'e.g. Photo: Jane Doe / Unsplash', value: p.photo_credit || '' });
+      const err = h('div', { class: 'notice warn hidden' });
+      box.append(h('h2', null, (p.name || 'Phase') + ' · colour & photo'), h('p', { class: 'lead' }, 'The colour marks this phase everywhere; the photo heads it in Carryon.'),
+        h('form', { onsubmit: async e => {
+          e.preventDefault();
+          const u = url.value.trim();
+          if (u && !/^https:\/\//i.test(u)) { err.textContent = 'The photo link has to start with https://'; err.classList.remove('hidden'); return; }
+          const patch = { colour: colour || null, photo_url: u || null, photo_credit: credit.value.trim() || null };
+          const { error } = await sb.from('phases').update(patch).eq('id', p.id);
+          if (error) { err.textContent = errText(error); err.classList.remove('hidden'); return; }
+          Object.assign(p, patch); close(); renderTrip(currentTab()); toast('Saved');
+        } },
+          h('div', { class: 'field' }, h('span', null, 'Colour'), sw),
+          h('label', { class: 'field' }, h('span', null, 'Photo link (optional)'), url),
+          h('label', { class: 'field' }, h('span', null, 'Photo credit'), credit), err,
+          h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'), h('button', { class: 'btn primary', type: 'submit' }, 'Save'))));
+    });
+  }
+
   /* ───────────── trip menu actions ───────────── */
   function renameModal() {
     const t = tripData.trip;
@@ -741,14 +1037,14 @@
   }
 
   /* ───────────── routing ───────────── */
-  function currentTab() { return /\/phases$/.test(location.hash) ? 'phases' : 'itinerary'; }
+  function currentTab() { const m = location.hash.match(/\/(phases|itinerary)$/); return m ? m[1] : 'planner'; }
   function route() {
     if (!authReady) return;
     const hash = location.hash;
     if (/access_token=|error_code=|type=magiclink/.test(hash)) return;   // the auth library is reading the link
     if (!session) { signInView(); return; }
-    const m = hash.match(/^#\/trip\/([0-9a-f-]{36})(\/phases)?$/i);
-    if (m) tripView(m[1], m[2] ? 'phases' : 'itinerary');
+    const m = hash.match(/^#\/trip\/([0-9a-f-]{36})(?:\/(phases|itinerary))?$/i);
+    if (m) tripView(m[1], m[2] || 'planner');
     else { tripData = null; tripsView(); }
   }
   window.addEventListener('hashchange', route);
