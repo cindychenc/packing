@@ -320,7 +320,7 @@
 
   async function tripView(id, tab) {
     if (!tripData || tripData.trip.id !== id) {
-      loading(); editingDates = false; settingStart = false;
+      loading(); editingDates = false; settingStart = false; curPhase = 0; lastPhase = 0; addingPhase = false; resetDraft();
       try { tripData = await loadTrip(id); }
       catch (e) { show(topbar(), h('main', null, h('div', { class: 'notice warn' }, 'Couldn\'t load this trip: ' + errText(e)))); return; }
       if (!tripData) {
@@ -354,10 +354,10 @@
   function renderTrip(tab) {
     // Redrawing the same trip keeps the page (and the phase columns) where they were scrolled to.
     const same = app.dataset.trip === tripData.trip.id && app.dataset.tab === tab;
-    const sy = window.scrollY, pm = document.querySelector('.planner-main'), sx = pm ? pm.scrollLeft : 0;
+    const sy = window.scrollY, pb = document.querySelector('.pcard.live .pc-body'), sx = pb ? pb.scrollTop : 0, samePhase = pb && pb.closest('.pcard').dataset.phase;
     drawTrip(tab);
     app.dataset.trip = tripData.trip.id; app.dataset.tab = tab;
-    if (same) { window.scrollTo(0, sy); const pm2 = document.querySelector('.planner-main'); if (pm2) pm2.scrollLeft = sx; }
+    if (same) { window.scrollTo(0, sy); const pb2 = document.querySelector('.pcard.live .pc-body'); if (pb2 && pb2.closest('.pcard').dataset.phase === samePhase) pb2.scrollTop = sx; }
   }
   function drawTrip(tab) {
     const { trip, days } = tripData;
@@ -456,7 +456,7 @@
       clearTimeout(timers[row.id + field]);
       const run = () => {
         const v = ta.value.replace(/\s+$/, '') || null;
-        if ((row[field] || null) === v) return;
+        if ((row[field] || null) === v) { if (!pending) setSave('saved', 'All changes saved'); return; }
         row[field] = v; saveDayField(row.id, { [field]: v });
       };
       if (now) run(); else { setSave('saving', 'Editing…'); timers[row.id + field] = setTimeout(run, 700); }
@@ -546,10 +546,7 @@
   /* ───────────── Planner tab (wireframe frames 4–7) ─────────────
      The trip as phases (columns) + days not planned yet (the tray). Structural changes go through layout.js and
      apply_layout() in one call, with an Undo toast; typing in a day saves that day only. */
-  const PLACEHOLDER_IDEAS = ['Patagonia', 'Tuscany', 'Kyoto', 'the Dolomites', 'Pacific Coast Highway'];
   let layoutQueue = Promise.resolve();
-  let typeTimer = null;
-  let barHover = null;      // free-day index hovered in the trip bar or tray
   let openMenu = null;      // phase id whose ••• menu is open
 
   function currentLayout() { return LAYOUT.fromRows(tripData.phases, tripData.days); }
@@ -593,202 +590,263 @@
     return res;
   }
 
+  /* ───────────── Planner: phase timeline + phase cards ("Shape the trip", canvas row 2) ─────────────
+     The timeline is the phase list (click = pick). The picked phase is a card with its stops and days;
+     the phases before and after peek in at the sides. Stops are runs of days with the same place (layout.js). */
+  const PLACES = window.SuitcasePlaces;
+  let curPhase = 0;          // index of the phase card in focus
+  let lastPhase = 0;         // for the slide-in direction
+  let addingPhase = false;   // the blank "Add a phase" card is in focus
+  const draft = { text: '', pick: null, nights: 2 };   // the "Add next stop" / first stop input
+  const resetDraft = () => { draft.text = ''; draft.pick = null; draft.nights = 2; };
+
+  const PIN = c => '<svg viewBox="0 0 24 24" width="20" height="20" fill="' + (c || '#888') + '" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.6" fill="#fff"/></svg>';
+  const PIN_ADD = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#9A9A9A" stroke-width="1.8" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><path d="M12 7v6M9 10h6" stroke-linecap="round"/></svg>';
+  const LEG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#3F5675" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16M6 14l6 6 6-6"/></svg>';
+
   function plannerTab() {
-    const L = currentLayout(), t = tripData.trip;
+    const L = currentLayout(), t = tripData.trip, n = L.phases.length;
     const dateAt = idx => LAYOUT.dateAt(t.start_date, idx);
     const shortDay = idx => (t.start_date ? md(dateAt(idx)) : 'Day ' + (idx + 1));
     const span = (a, b) => (a === b ? shortDay(a) : shortDay(a) + ' – ' + shortDay(b));
-    const freeStart = L.phases.reduce((a, p) => a + p.days.length, 0);
+    const fmt = { dateAt, shortDay, span, freeStart: LAYOUT.total(L) - L.free.length };
     saveState = h('span', { class: 'save-state saved' }, 'All changes saved');
-    const newPhaseUpTo = k => tryLayout(LAYOUT.insertPhaseAt(currentLayout(), currentLayout().phases.length, k + 1));
-    const nameFocus = i => setTimeout(() => { const el = document.querySelectorAll('.pcol .pname')[i]; if (el) el.focus(); }, 30);
+    if (curPhase > n - 1) curPhase = Math.max(0, n - 1);
+    if (!L.free.length) addingPhase = false;
+    const blankOn = !n || addingPhase;
+    const pick = i => { lastPhase = curPhase; curPhase = i; addingPhase = false; openMenu = null; renderTrip('planner'); };
 
-    /* trip bar */
-    const bar = h('div', { class: 'tripbar' });
-    const hintText = L.free.length ? 'Drag a phase\'s right edge to change its length · drag a phase to reorder · click a free day to start a new phase' : 'Drag a phase\'s right edge to change its length · drag a phase to reorder';
-    const hint = h('div', { class: 'tripbar-hint' }, L.phases.length || !L.free.length ? hintText : 'Click a day to start your first phase there');
-    L.phases.forEach((p, i) => {
-      const block = h('div', { class: 'tb-phase', style: { flex: p.days.length, background: p.colour || '#C9C9C9' }, title: LAYOUT.nameOf(L, i) },
-        h('span', { class: 'tb-label' }, LAYOUT.nameOf(L, i) + ' · ' + p.days.length),
-        h('span', { class: 'tb-edge', title: 'Drag to change the length' }));
-      block.addEventListener('pointerdown', e => barDrag(e, i, block, bar, L));
-      bar.append(block);
-    });
-    if (L.free.length) {
-      const free = h('div', { class: 'tb-free', style: { flex: L.free.length } });
-      L.free.forEach((d, k) => free.append(h('button', { class: 'tb-day' + (barHover !== null && k <= barHover ? ' hot' : ''), 'aria-label': 'New phase up to ' + shortDay(freeStart + k),
-        onmouseenter: () => { barHover = k; paintHover(); }, onmouseleave: () => { barHover = null; paintHover(); },
-        onclick: () => { barHover = null; if (newPhaseUpTo(k)) nameFocus(L.phases.length); } })));
-      free.append(h('span', { class: 'tb-free-label' }, plural(L.free.length, 'more day') + ' to plan'));
-      bar.append(free);
-    }
-    const tip = h('div', { class: 'tb-tip hidden' });
-    function paintHover() {
-      document.querySelectorAll('.tb-day').forEach((el, k) => el.classList.toggle('hot', barHover !== null && k <= barHover));
-      document.querySelectorAll('.tray-day').forEach((el, k) => el.classList.toggle('hot', barHover !== null && k <= barHover));
-      const th = document.querySelector('.tray-hint');
-      if (barHover === null) { hint.textContent = L.phases.length || !L.free.length ? hintText : 'Click a day to start your first phase there'; hint.classList.remove('hot'); if (th) th.textContent = trayHint; }
-      else {
-        hint.textContent = '+ New phase · ' + plural(barHover + 1, 'day') + ' · ' + span(freeStart, freeStart + barHover); hint.classList.add('hot');
-        if (th) th.textContent = span(freeStart, freeStart + barHover) + ' · click to plan up to here';
-        const tt = document.querySelector('.tray-title.empty-title');
-        if (tt) tt.textContent = 'Let\'s plan the first ' + plural(barHover + 1, 'day');
-      }
-      if (barHover === null) { const tt = document.querySelector('.tray-title.empty-title'); if (tt) tt.textContent = 'Let\'s plan the first few days'; }
-    }
+    /* timeline */
+    const tl = h('div', { class: 'tl', role: 'list' },
+      L.phases.map((p, i) => {
+        const st = LAYOUT.startIdx(L, i);
+        return h('button', { class: 'tl-ph' + (i === curPhase && !blankOn ? ' on' : ''), role: 'listitem', style: { flex: p.days.length, background: p.colour || '#888' },
+          title: LAYOUT.nameOf(L, i) + ' · ' + span(st, st + p.days.length - 1), 'aria-current': i === curPhase && !blankOn ? 'true' : null, onclick: () => pick(i) },
+          h('b', null, LAYOUT.nameOf(L, i)), h('span', null, plural(p.days.length, 'day')));
+      }),
+      L.free.length ? h('button', { class: 'tl-free' + (blankOn ? ' on' : ''), role: 'listitem', style: { flex: L.free.length },
+        onclick: () => { if (!n) return; lastPhase = curPhase; curPhase = n - 1; addingPhase = true; renderTrip('planner'); } },
+        plural(L.free.length, 'day') + ' to plan') : null);
 
-    /* tray: days not in a phase yet */
-    const trayHint = L.phases.length ? 'Click the day your next phase ends' : 'Pick a day — we\'ll plan your first steps up to there';
-    let tray = null;
-    if (L.free.length) {
-      const CAP = 42, shown = L.free.slice(0, CAP);
-      tray = h('aside', { class: 'tray' + (L.phases.length ? '' : ' alone') },
-        L.phases.length ? h('div', { class: 'tray-title' }, plural(L.free.length, 'more day') + ' to plan')
-                        : h('div', { class: 'tray-title empty-title' }, 'Let\'s plan the first few days'),
-        h('div', { class: 'tray-hint' }, trayHint),
-        h('div', { class: 'tray-grid' }, shown.map((d, k) => {
-          const idx = freeStart + k;
-          return h('button', { class: 'tray-day', 'aria-label': 'Plan up to ' + shortDay(idx),
-            onmouseenter: () => { barHover = k; paintHover(); }, onmouseleave: () => { barHover = null; paintHover(); },
-            onclick: () => { barHover = null; if (newPhaseUpTo(k)) nameFocus(L.phases.length); } },
-            t.start_date ? [h('span', { class: 'wd' }, wd(dateAt(idx)).toUpperCase()), h('strong', null, pd(dateAt(idx)).getUTCDate())]
-                         : [h('span', { class: 'wd' }, 'DAY'), h('strong', null, idx + 1)]);
-        }), L.free.length > CAP ? h('span', { class: 'tray-more' }, '+ ' + (L.free.length - CAP) + ' more') : null));
+    /* cards */
+    let main, left = null, right = null;
+    if (blankOn) {
+      main = startCard(L, fmt);
+      if (n) left = phaseCard(L, n - 1, fmt, false);
+    } else {
+      main = phaseCard(L, curPhase, fmt, true);
+      if (curPhase > 0) left = phaseCard(L, curPhase - 1, fmt, false);
+      if (curPhase < n - 1) right = phaseCard(L, curPhase + 1, fmt, false);
+      else if (L.free.length) right = h('div', { class: 'pcard blank' }, h('div', { class: 'blank-in' },
+        h('strong', null, '+ Add a phase'), h('span', { class: 'muted' }, plural(L.free.length, 'day') + ' left to plan')));
     }
-
-    /* phase columns */
-    let cols = null;
-    if (L.phases.length) {
-      cols = h('div', { class: 'phasecard' }, L.phases.map((p, i) => phaseColumn(L, p, i, { shortDay, span })));
-    }
-
-    clearInterval(typeTimer);
-    let tick = 0;
-    typeTimer = setInterval(() => {
-      const inputs = document.querySelectorAll('.pcol .pname');
-      if (!inputs.length) return clearInterval(typeTimer);
-      tick++;
-      inputs.forEach((el, i) => { if (!el.value) el.placeholder = typedPlaceholder(i, tick); });
-    }, 90);
+    const focusIdx = blankOn ? n : curPhase;
+    const dir = focusIdx > lastPhase ? ' from-r' : focusIdx < lastPhase ? ' from-l' : '';
+    lastPhase = focusIdx;
+    const tilt = k => ({ '--tilt': (k % 2 ? 1.5 : -1.5) + 'deg' });
+    const stage = h('div', { class: 'stage' },
+      left ? h('div', { class: 'peek l' + dir, style: tilt(focusIdx - 1), onclick: () => pick(blankOn ? n - 1 : curPhase - 1), title: 'Open this phase' }, left) : null,
+      h('div', { class: 'focus' + dir }, main),
+      right ? h('div', { class: 'peek r' + dir, style: tilt(focusIdx + 1), title: right.classList.contains('blank') ? 'Add a phase' : 'Open this phase',
+        onclick: () => { if (right.classList.contains('blank')) { resetDraft(); addingPhase = true; renderTrip('planner'); } else pick(curPhase + 1); } }, right) : null);
 
     return h('section', { class: 'planner' },
-      h('div', { class: 'planner-top' }, h('div', { class: 'tripbar-wrap' }, bar, tip), h('div', { class: 'planner-meta' }, hint, saveState)),
-      h('div', { class: 'planner-main' + (L.phases.length ? '' : ' no-phases') }, cols, tray));
+      h('div', { class: 'planner-top' }, tl, h('div', { class: 'planner-meta' }, saveState)),
+      stage);
   }
 
-  // "First area to explore", then example regions, typed out one letter at a time.
-  function typedPlaceholder(i, tick) {
-    const words = [LAYOUT.suggestion(i)].concat(PLACEHOLDER_IDEAS.map(w => 'e.g. ' + w));
-    const lives = words.map(w => w.length + 18);      // type it out, hold, then the next one
-    let n = tick % lives.reduce((a, b) => a + b, 0);
-    for (let k = 0; k < words.length; k++) {
-      if (n < lives[k]) return words[k].slice(0, Math.min(words[k].length, n + 1));
-      n -= lives[k];
-    }
-    return words[0];
-  }
-
-  function phaseColumn(L, p, i, fmt) {
-    const start = LAYOUT.startIdx(L, i), n = p.days.length;
-    const name = h('input', { class: 'pname', value: p.name || '', placeholder: LAYOUT.suggestion(i), maxlength: 60, 'aria-label': 'Phase ' + (i + 1) + ' name' });
-    name.addEventListener('change', async () => {
-      const v = name.value.trim() || null;
-      const row = tripData.phases.find(x => x.id === p.id);
-      if (row) row.name = v;
-      const { error } = await sb.from('phases').update({ name: v }).eq('id', p.id);
-      if (error) toast('Couldn\'t save the name: ' + errText(error), true);
-      else document.querySelectorAll('.tb-phase .tb-label')[i] && (document.querySelectorAll('.tb-phase .tb-label')[i].textContent = (v || LAYOUT.suggestion(i)) + ' · ' + n);
+  /* A phase card. live = the one in focus (editable); the side cards are read-only previews. */
+  function phaseCard(L, i, fmt, live) {
+    const p = L.phases[i], st = LAYOUT.startIdx(L, i), stops = LAYOUT.stopsOf(p);
+    const nStops = stops.filter(s => s.place).length;
+    let name;
+    if (live) {
+      name = h('input', { class: 'pc-name', value: p.name || '', placeholder: LAYOUT.suggestion(i), maxlength: 60, 'aria-label': 'Phase name' });
+      name.addEventListener('change', () => renamePhase(p.id, name.value.trim() || null));
+      name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+    } else name = h('strong', { class: 'pc-name' }, LAYOUT.nameOf(L, i));
+    const head = h('div', { class: 'pc-head' },
+      h('i', { class: 'pc-sw', style: { background: p.colour || '#888' } }), name,
+      h('span', { class: 'pc-meta' }, span3(fmt, st, p.days.length) + (nStops ? ' · ' + plural(nStops, 'stop') : '')),
+      live ? phaseMenu(L, i, p) : null);
+    const flow = h('div', { class: 'flow' });
+    let prev = null;
+    stops.forEach(s => {
+      if (s.place) {
+        if (prev) flow.append(h('div', { class: 'f-leg' }, h('span', { class: 'f-ico' }, svg(LEG)), h('span', { class: 'muted' }, prev + ' → ' + s.place)));
+        prev = s.place;
+        flow.append(h('div', { class: 'f-stop' }, h('span', { class: 'f-ico' }, svg(PIN(p.colour))),
+          h('strong', { class: 'f-place' }, s.place), h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1)),
+          live ? nights(s.n, v => tryLayout(LAYOUT.setStopNights(currentLayout(), i, s.start, v)), s.place) : h('span', { class: 'muted' }, plural(s.n, 'night'))));
+      }
+      for (let j = s.start; j < s.start + s.n; j++) flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place));
     });
-    name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+    if (live) flow.append(stopRow({ placeholder: 'Add next stop', ghostFrom: st + p.days.length, fmt, lastPhase: i === L.phases.length - 1,
+      onAdd: (place, pk, nn) => addStopTo(i, place, pk, nn) }));
+    return h('section', { class: 'pcard' + (live ? ' live' : ''), 'data-phase': p.id, inert: live ? null : true }, head, h('div', { class: 'pc-body' }, flow));
+  }
+  const span3 = (fmt, st, len) => fmt.span(st, st + len - 1) + ' · ' + plural(len, 'day');
 
+  function flowDay(L, i, j, idx, fmt, live, free) {
+    const d = L.phases[i].days[j], row = tripData.days.find(x => x.id === d.id), date = fmt.dateAt(idx);
+    const box = h('span', { class: 'f-day' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]);
+    const rm = live ? h('button', { class: 'dx', 'aria-label': 'Remove ' + fmt.shortDay(idx), title: 'Remove this day', onclick: () => tryLayout(LAYOUT.removeDay(currentLayout(), i, j)) }, '×') : null;
+    if (free) {
+      if (!live) return h('div', { class: 'f-row free' }, box, h('span', { class: 'muted' }, 'Free day'));
+      const loc = h('input', { class: 'f-in', placeholder: 'Free day · where are you?', 'aria-label': 'Where are you on ' + fmt.shortDay(idx) });
+      loc.addEventListener('change', () => { const v = loc.value.trim(); if (!v || !row) return; row.location = v; saveDayField(row.id, { location: v }); renderTrip('planner'); });
+      loc.addEventListener('keydown', e => { if (e.key === 'Enter') loc.blur(); });
+      return h('div', { class: 'f-row free' }, box, loc, rm);
+    }
+    if (!live) return h('div', { class: 'f-row' }, box, h('span', { class: 'f-plan' + (d.plan ? '' : ' muted') }, d.plan || 'No plan yet'));
+    const plan = h('input', { class: 'f-in', value: d.plan || '', placeholder: 'Add a plan', 'aria-label': 'Plan for ' + fmt.shortDay(idx) });
+    plan.addEventListener('input', () => {
+      if (!row) return; const v = plan.value.trim() || null; row.plan = v;
+      clearTimeout(row._tplan); row._tplan = setTimeout(() => saveDayField(row.id, { plan: v }), 500);
+    });
+    plan.addEventListener('keydown', e => { if (e.key === 'Enter') plan.blur(); });
+    return h('div', { class: 'f-row' }, box, plan, rm);
+  }
+
+  // – N nights +
+  function nights(n, onSet, label) {
+    return h('span', { class: 'nights' },
+      h('button', { class: 'mini', 'aria-label': 'One night less' + (label ? ' in ' + label : ''), disabled: n <= 1, onclick: () => onSet(n - 1) }, '–'),
+      h('b', null, plural(n, 'night')),
+      h('button', { class: 'mini', 'aria-label': 'One night more' + (label ? ' in ' + label : ''), onclick: () => onSet(n + 1) }, '+'));
+  }
+
+  /* The place input with autocomplete, nights, an Add button once a place is typed,
+     and faded "Free day" rows for the days it will add (only while the input is in use). */
+  function stopRow(o) {
+    const inp = h('input', { class: 'f-in stop-in', placeholder: o.placeholder, value: draft.text, autocomplete: 'off', role: 'combobox',
+      'aria-expanded': 'false', 'aria-autocomplete': 'list', 'aria-label': o.placeholder, id: o.id || null });
+    const list = h('div', { class: 'ac hidden', role: 'listbox' });
+    const add = h('button', { class: 'btn primary small' + (draft.text.trim() ? '' : ' hidden'), onclick: () => go() }, 'Add');
+    const nb = h('b', null, plural(draft.nights, 'night'));
+    const minus = h('button', { class: 'mini', 'aria-label': 'One night less', disabled: draft.nights <= 1, onclick: () => setN(draft.nights - 1) }, '–');
+    const plus = h('button', { class: 'mini', 'aria-label': 'One night more', onclick: () => setN(draft.nights + 1) }, '+');
+    const ghosts = h('div', { class: 'f-ghosts hidden' });
+    let items = [], acI = 0, seq = 0, timer = null, focused = false;
+    const using = () => focused || !!draft.text.trim();
+    function paintGhosts() {
+      ghosts.classList.toggle('hidden', !using());
+      const rows = [];
+      for (let k = 0; k < draft.nights; k++) {
+        const idx = o.ghostFrom + k, date = o.fmt.dateAt(idx);
+        rows.push(h('div', { class: 'f-row gh' }, h('span', { class: 'f-day' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]),
+          h('span', { class: 'muted' }, 'Free day')));
+      }
+      ghosts.replaceChildren(...rows);
+    }
+    function setN(v) { draft.nights = Math.max(1, Math.min(LAYOUT.MAX_DAYS, v)); nb.textContent = plural(draft.nights, 'night'); minus.disabled = draft.nights <= 1; paintGhosts(); if (o.onChange) o.onChange(); }
+    function paintList() {
+      const open = focused && items.length > 0;
+      list.classList.toggle('hidden', !open); inp.setAttribute('aria-expanded', open ? 'true' : 'false');
+      list.replaceChildren(...items.map((it, k) => h('button', { class: 'ac-i' + (k === acI ? ' on' : ''), role: 'option', 'aria-selected': k === acI ? 'true' : 'false',
+        onmousedown: e => { e.preventDefault(); choose(it); } }, h('strong', null, it.name), it.label ? h('span', { class: 'muted' }, it.label) : null)));
+    }
+    function choose(it) { draft.text = it.name; draft.pick = it; inp.value = it.name; items = []; paintList(); add.classList.remove('hidden'); if (o.onChange) o.onChange(); }
+    function go() {
+      const v = draft.text.trim(); if (!v) { inp.focus(); return; }
+      const pk = draft.pick && draft.pick.name === v ? draft.pick : null, nn = draft.nights;
+      resetDraft(); o.onAdd(v, pk, nn);
+    }
+    inp.addEventListener('input', () => {
+      draft.text = inp.value; draft.pick = null;
+      add.classList.toggle('hidden', !draft.text.trim()); paintGhosts(); if (o.onChange) o.onChange();
+      clearTimeout(timer); const my = ++seq;
+      timer = setTimeout(async () => { const r = await PLACES.suggest(draft.text); if (my !== seq) return; items = r; acI = 0; paintList(); }, 250);
+    });
+    inp.addEventListener('keydown', e => {
+      const open = !list.classList.contains('hidden');
+      if (e.key === 'ArrowDown' && open) { e.preventDefault(); acI = (acI + 1) % items.length; paintList(); }
+      else if (e.key === 'ArrowUp' && open) { e.preventDefault(); acI = (acI - 1 + items.length) % items.length; paintList(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (open) choose(items[acI]); else go(); }
+      else if (e.key === 'Escape') { items = []; paintList(); }
+    });
+    inp.addEventListener('focus', () => { focused = true; paintGhosts(); paintList(); });
+    inp.addEventListener('blur', () => setTimeout(() => { focused = false; items = items; paintList(); paintGhosts(); }, 150));
+    paintGhosts();
+    return h('div', { class: 'stop-add' },
+      h('div', { class: 'f-stop add' }, h('span', { class: 'f-ico' }, svg(PIN_ADD)),
+        h('span', { class: 'ac-wrap' }, inp, list),
+        h('span', { class: 'nights' }, minus, nb, plus), add),
+      ghosts);
+  }
+
+  /* Empty trip ("Let's get started.") or a new phase after the last one ("Add a phase"). */
+  function startCard(L, fmt) {
+    const first = !L.phases.length, n = L.phases.length;
+    const title = h('h2', { class: 'pc-name start-t' });
+    const sub = h('span', { class: 'pc-meta' });
+    const paint = () => {
+      const guess = PLACES.phaseNameFor(draft.pick);
+      title.textContent = draft.text.trim() ? (guess || (first ? 'First phase' : 'Phase ' + (n + 1))) : (first ? 'Let\'s get started.' : 'Add a phase');
+      title.classList.toggle('preview', !!draft.text.trim());
+      sub.textContent = plural(L.free.length, 'day') + ' to plan' + (first ? ' · add where the trip starts' : ' · add the first stop of the next phase');
+    };
+    paint();
+    const row = stopRow({ id: 'firststop', placeholder: first ? 'Where does the trip start?' : 'First stop of the next phase', ghostFrom: fmt.freeStart, fmt,
+      onChange: paint, onAdd: (place, pk, nn) => firstStopAdd(place, pk, nn) });
+    return h('section', { class: 'pcard live start' },
+      h('div', { class: 'pc-head' }, h('i', { class: 'pc-sw', style: { background: LAYOUT.nextColour(L) } }), title, sub,
+        !first ? h('button', { class: 'link-btn', onclick: () => { addingPhase = false; resetDraft(); renderTrip('planner'); } }, 'Cancel') : null),
+      h('div', { class: 'pc-body' }, h('div', { class: 'flow' }, row)));
+  }
+
+  function phaseMenu(L, i, p) {
     const menu = h('div', { class: 'menu pmenu' + (openMenu === p.id ? '' : ' hidden') },
-      h('button', { disabled: i === 0, onclick: () => { openMenu = null; tryLayout(LAYOUT.movePhase(currentLayout(), i, i - 1)); } }, 'Move left'),
-      h('button', { disabled: i === L.phases.length - 1, onclick: () => { openMenu = null; tryLayout(LAYOUT.movePhase(currentLayout(), i, i + 1)); } }, 'Move right'),
+      h('button', { disabled: i === 0, onclick: () => { openMenu = null; if (tryLayout(LAYOUT.movePhase(currentLayout(), i, i - 1))) curPhase = i - 1, renderTrip('planner'); } }, 'Move earlier'),
+      h('button', { disabled: i === L.phases.length - 1, onclick: () => { openMenu = null; if (tryLayout(LAYOUT.movePhase(currentLayout(), i, i + 1))) curPhase = i + 1, renderTrip('planner'); } }, 'Move later'),
       h('button', { onclick: () => { openMenu = null; colourPhotoModal(p.id); } }, 'Colour & photo…'),
       h('hr'),
       h('button', { class: 'danger', onclick: () => { openMenu = null; tryLayout(LAYOUT.removePhase(currentLayout(), i)); } }, 'Delete phase'));
     const more = h('button', { class: 'icon-btn small', 'aria-label': 'More for ' + LAYOUT.nameOf(L, i), onclick: e => {
       e.stopPropagation(); const open = menu.classList.contains('hidden');
       document.querySelectorAll('.pmenu').forEach(m => m.classList.add('hidden')); menu.classList.toggle('hidden', !open); openMenu = open ? p.id : null; } }, svg(ICON.more));
-
-    const days = p.days.map((d, j) => dayCard(L, p, i, j, start + j, fmt));
-    return h('section', { class: 'pcol', 'data-phase': p.id },
-      h('div', { class: 'pcol-head' }, h('i', { class: 'pdot', style: { background: p.colour || '#C9C9C9' } }), name, h('div', { class: 'menu-wrap' }, more, menu)),
-      h('div', { class: 'pcol-info' }, plural(n, 'day') + ' · ' + fmt.span(start, start + n - 1)),
-      h('div', { class: 'daylist' }, days,
-        h('button', { class: 'add-day', onclick: () => tryLayout(LAYOUT.addDayToPhase(currentLayout(), i)) }, '+ Add a day')));
+    return h('div', { class: 'menu-wrap' }, more, menu);
   }
 
-  function dayCard(L, p, i, j, idx, fmt) {
-    const d = p.days[j];
-    const row = tripData.days.find(x => x.id === d.id);
-    const t = tripData.trip;
-    const date = LAYOUT.dateAt(t.start_date, idx);
-    const prev = j > 0 ? p.days[j - 1] : null;
-    // "↓ Kyoto again": only on the first empty day right after a day with a place
-    const again = !d.location && prev && prev.location ? prev.location : null;
-    const save = (field, v) => {
-      if (!row) return;
-      row[field] = v || null;
-      clearTimeout(row['_t' + field]); row['_t' + field] = setTimeout(() => saveDayField(row.id, { [field]: v || null }), 500);
-    };
-    const loc = h('input', { class: 'dloc', value: d.location || '', placeholder: 'Where are you?', 'aria-label': 'Where are you on ' + fmt.shortDay(idx) });
-    const plan = h('input', { class: 'dplan', value: d.plan || '', placeholder: 'Start planning', 'aria-label': 'Plan for ' + fmt.shortDay(idx) });
-    const planWrap = h('div', { class: d.location ? '' : 'hidden' }, plan);
-    loc.addEventListener('input', () => { save('location', loc.value.trim()); planWrap.classList.toggle('hidden', !loc.value.trim()); });
-    // When the place changes, redraw (plan field, "↓ … again" hints, phase info) but keep the cursor where the user went.
-    let locChanged = false;
-    loc.addEventListener('change', () => { locChanged = true; });
-    loc.addEventListener('blur', e => {
-      if (!locChanged) return;
-      const next = e.relatedTarget && e.relatedTarget.getAttribute('aria-label');
-      setTimeout(() => { renderTrip(currentTab()); if (next) { const el = document.querySelector('[aria-label="' + next.replace(/"/g, '\\"') + '"]'); if (el) el.focus(); } }, 0);
-    });
-    plan.addEventListener('input', () => save('plan', plan.value.trim()));
-    [loc, plan].forEach(el => el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); }));
-    return h('div', { class: 'dcard' },
-      h('div', { class: 'dtile' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]),
-      h('div', { class: 'dbody' }, loc,
-        again ? h('button', { class: 'again', onclick: () => { save('location', again); renderTrip(currentTab()); } }, '↓ ' + again + ' again') : null,
-        planWrap),
-      h('button', { class: 'dx', 'aria-label': 'Remove ' + fmt.shortDay(idx), title: 'Remove this day', onclick: () => tryLayout(LAYOUT.removeDay(currentLayout(), i, j)) }, '×'));
+  async function renamePhase(id, v) {
+    const row = tripData.phases.find(x => x.id === id);
+    if (row) { row.name = v; row.auto_name = false; }
+    // After any layout save still on its way, so an older layout can't put the old name back.
+    const { error } = await (layoutQueue = layoutQueue.then(() => sb.from('phases').update({ name: v, auto_name: false }).eq('id', id)));
+    if (error) toast('Couldn\'t save the name: ' + errText(error), true);
+    else if (tripData && currentTab() === 'planner' && document.querySelector('.planner')) renderTrip('planner');
   }
 
-  // Trip bar dragging: the right edge changes a phase's length; the block itself reorders. A click jumps to the column.
-  function barDrag(e, i, block, bar, L) {
-    if (e.button !== 0) return;
-    const edge = e.target.classList.contains('tb-edge');
-    const total = LAYOUT.total(L), dayW = bar.getBoundingClientRect().width / total;
-    const x0 = e.clientX; let moved = false, delta = 0, target = i;
-    const w0 = block.getBoundingClientRect().width;
-    block.setPointerCapture(e.pointerId);
-    const onMove = ev => {
-      const dx = ev.clientX - x0;
-      if (!moved && Math.abs(dx) < 5) return;
-      moved = true;
-      if (edge) {
-        delta = Math.max(1 - L.phases[i].days.length, Math.round(dx / dayW));
-        block.style.flex = 'none'; block.style.width = Math.max(dayW, w0 + delta * dayW) + 'px';
-        block.querySelector('.tb-label').textContent = LAYOUT.nameOf(L, i) + ' · ' + (L.phases[i].days.length + delta);
-      } else {
-        block.style.transform = 'translateX(' + dx + 'px)'; block.classList.add('dragging');
-        const blocks = [...bar.querySelectorAll('.tb-phase')];
-        const cx = ev.clientX;
-        target = blocks.reduce((best, b, k) => { const r = b.getBoundingClientRect(); return cx > r.left + r.width / 2 ? k : best; }, 0);
-        if (cx < blocks[0].getBoundingClientRect().left + blocks[0].getBoundingClientRect().width / 2) target = 0;
-      }
-    };
-    const onUp = () => {
-      block.removeEventListener('pointermove', onMove); block.removeEventListener('pointerup', onUp);
-      if (!moved) {
-        const col = document.querySelectorAll('.pcol')[i];
-        if (col) col.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-        return;
-      }
-      if (edge) { if (delta) tryLayout(LAYOUT.resizePhase(currentLayout(), i, delta)); else renderTrip(currentTab()); }
-      else { if (target !== i) tryLayout(LAYOUT.movePhase(currentLayout(), i, target)); else renderTrip(currentTab()); }
-    };
-    block.addEventListener('pointermove', onMove); block.addEventListener('pointerup', onUp);
+  // Name a phase from its first stop while it is still auto-named (country, or continent for a country).
+  function autoName(layout, i, pk) {
+    const p = layout.phases[i], row = tripData.phases.find(x => x.id === p.id);
+    if (row && row.auto_name === false) return;
+    const guess = PLACES.phaseNameFor(pk);
+    if (!guess) return;
+    const placed = LAYOUT.stopsOf(p).filter(s => s.place).length;
+    if (placed === 1 || !(p.name || '').trim()) p.name = guess;
+  }
+
+  // Keep where each place is (for the map later). Same name on the same trip = same place.
+  function rememberPlace(pk) {
+    if (!pk || !tripData) return;
+    sb.from('places').upsert({ trip_id: tripData.trip.id, name: pk.name, lat: pk.lat, lng: pk.lng, country: pk.country, found_as: pk.label || null },
+      { onConflict: 'trip_id,name' }).then(r => { if (r && r.error) console.warn('place not saved', r.error.message); });
+  }
+  const focusAdd = () => setTimeout(() => { const el = document.querySelector('.pcard.live .stop-in'); if (el) el.focus(); }, 30);
+
+  function addStopTo(i, place, pk, nn) {
+    const res = LAYOUT.addStop(currentLayout(), i, place, nn);
+    if (res.error) { toast(res.error, true); return; }
+    autoName(res.layout, i, pk); rememberPlace(pk);
+    commitLayout(res.layout, res.msg); focusAdd();
+  }
+  function firstStopAdd(place, pk, nn) {
+    const res = LAYOUT.firstStop(currentLayout(), place, nn);
+    if (res.error) { toast(res.error, true); return; }
+    autoName(res.layout, res.phaseIndex, pk); rememberPlace(pk);
+    lastPhase = curPhase; curPhase = res.phaseIndex; addingPhase = false;
+    commitLayout(res.layout, res.msg); focusAdd();
   }
 
   // Colour & photo for a phase (from its ••• menu).

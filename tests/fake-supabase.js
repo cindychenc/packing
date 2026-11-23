@@ -65,7 +65,7 @@
       select() { if (q.op === 'select') q.op = 'select'; q.returning = true; return api; },
       insert(p) { q.op = 'insert'; q.payload = p; return api; },
       update(p) { q.op = 'update'; q.payload = p; return api; },
-      upsert(p) { q.op = 'upsert'; q.payload = p; return api; },
+      upsert(p, o) { q.op = 'upsert'; q.payload = p; q.keys = ((o && o.onConflict) || 'id').split(','); return api; },
       delete() { q.op = 'delete'; return api; },
       eq(c, v) { q.filters.push(r => r[c] === v); return api; },
       in(c, arr) { q.filters.push(r => arr.indexOf(r[c]) >= 0); return api; },
@@ -99,8 +99,8 @@
         }
       } else if (q.op === 'upsert') {
         data = [].concat(q.payload).map(p => {
-          const r = rows.find(x => x.id === p.id);
-          if (r) Object.assign(r, p); else rows.push(Object.assign({}, p));
+          const r = rows.find(x => q.keys.every(k => x[k] !== undefined && x[k] === p[k]));
+          if (r) Object.assign(r, p); else rows.push(Object.assign({ id: uid() }, p));
           return Object.assign({}, r || p);
         });
       } else if (q.op === 'delete') {
