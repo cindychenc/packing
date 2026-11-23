@@ -67,15 +67,23 @@ try:
         page.click('.modal button[type=submit]')
         page.wait_for_selector('.planner .tray.alone'); page.mouse.move(5, 5)
         tt = page.inner_text('.tray.alone'); ok("Let's plan the first few days" in tt and len(page.query_selector_all('.tray-day')) == 14, f'new trip opens on the Planner, empty ({tt[:60]!r})')
-        page.click('a.tab:has-text("Itinerary")'); page.wait_for_selector('table.itin')
-        rows = page.query_selector_all('table.itin tbody tr')
-        ok(len(rows) == 14, f'14 day rows created ({len(rows)})')
+        ok(page.is_visible('.fnav .fn.on:has-text("Planner")') and page.is_visible('.fnav .fn.off:has-text("Bookings")'), 'bottom nav: Planner on, Bookings soon')
+        page.click('.fnav a:has-text("Itinerary")'); page.wait_for_selector('.itin-empty')
+        ok('Nothing on the itinerary yet' in page.inner_text('.itin-empty'), 'empty itinerary')
         ok('Mon, Apr 5 – Sun, Apr 18, 2027 · 14 days' in page.inner_text('.trip-head .meta'), f"header meta ({page.inner_text('.trip-head .meta')!r})")
+        page.click('.itin-empty a:has-text("Start planning")'); page.wait_for_selector('.tray.alone')
+        ok(True, 'Start planning goes to the Planner')
+        page.locator('.tray-day').nth(4).click(); page.wait_for_selector('.pcol')
+        page.wait_for_function("document.activeElement && document.activeElement.classList.contains('pname')")
+        page.keyboard.type('Lisbon & Sintra'); page.keyboard.press('Enter'); page.wait_for_timeout(200)
 
-        # 4. type a location, Enter moves down, autosave
-        loc = lambda i: page.locator('table.itin tbody tr').nth(i).locator('textarea').nth(0)
-        loc(0).click(); page.keyboard.type('Lisbon'); page.keyboard.press('Enter')
-        ok(page.evaluate("document.activeElement.getAttribute('aria-label')").startswith('Location for Apr 6'), 'Enter moves to next day')
+        # 4. Itinerary grouped by phase: type a location, autosave
+        page.click('.fnav a:has-text("Itinerary")'); page.wait_for_selector('table.itin.grouped')
+        ok(page.input_value('.ghead .gname') == 'Lisbon & Sintra' and 'Apr 5 – Apr 9 · 5 days' in page.inner_text('.ghead'), 'phase header row')
+        ok(len(page.query_selector_all('table.itin tbody tr[data-id]')) == 5, '5 day rows under the phase')
+        ok('9 more days to plan' in page.inner_text('.freebox') and 'Apr 10 – Apr 18' in page.inner_text('.freebox'), 'days to plan folded into one box')
+        loc = lambda i: page.locator('table.itin tbody tr[data-id]').nth(i).locator('textarea').nth(0)
+        loc(0).click(); page.keyboard.type('Lisbon'); loc(1).click()
         page.wait_for_selector('.save-state.saved', timeout=3000)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
         ok(any(d['location'] == 'Lisbon' for d in db['days']), 'location saved')
@@ -89,32 +97,35 @@ try:
         byIdx = {d['idx']: d for d in db['days']}   # Apr 5 = day 0
         ok(byIdx[2]['location'] == 'Sintra' and byIdx[3]['plan'] == 'Roman temple' and byIdx[4]['location'] == 'Monsaraz', 'multi-row paste saved')
         ok(loc(3).input_value() == 'Évora', 'pasted values shown in grid')
+        ok(byIdx[2]['phase_id'] and byIdx[4]['phase_id'], 'paste keeps days in their phase')
 
-        # 6. tick days 1–5 (shift-click), set a new phase
-        page.locator('.cell-day').nth(0).click(); page.locator('.cell-day').nth(4).click(modifiers=['Shift'])
-        ok('5 days selected' in page.inner_text('.selbar'), 'range selection')
-        page.select_option('.selbar select', '__new'); page.click('.selbar .btn:has-text("Set phase")')
-        page.wait_for_selector('.phase-bar')
+        # 6. + Add a day to the phase, + Add new phase
+        page.click('.add-row-btn:has-text("Add a day to Lisbon & Sintra")')
+        page.wait_for_function("document.querySelectorAll('table.itin tbody tr[data-id]').length === 6")
+        ok('8 more days to plan' in page.inner_text('.freebox'), 'add a day takes one from the days to plan')
+        page.click('#toast button:has-text("Undo")')
+        page.wait_for_function("document.querySelectorAll('table.itin tbody tr[data-id]').length === 5")
+        page.click('.freebox button:has-text("Add new phase")')
+        page.wait_for_function("document.querySelectorAll('tr.ghead').length === 2")
+        page.wait_for_function("document.activeElement && document.activeElement.classList.contains('gname')")
+        page.keyboard.type('Alentejo'); page.keyboard.press('Enter'); page.wait_for_timeout(300)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
-        ok(len(db['phases']) == 1 and sum(1 for d in db['days'] if d['phase_id']) == 5, 'phase created and assigned to 5 days')
-        # second phase via the row dropdown
-        page.locator('.phase-select').nth(5).select_option('__new')
-        page.wait_for_timeout(300)
+        ok(len(db['phases']) == 2 and any(p['name'] == 'Alentejo' for p in db['phases']) and sum(1 for d in db['days'] if d['phase_id']) == 6, 'new 1-day phase, named')
         page.screenshot(path=str(SHOTS / '05-itinerary.png'), full_page=True)
 
-        # 7. phases tab: rename + colour
-        page.click('a.tab:has-text("Phases")'); page.wait_for_selector('.phase-row')
-        n = page.locator('.phase-row .name-input').first
-        n.fill('Lisbon & Sintra'); n.press('Enter'); page.wait_for_timeout(200)
-        page.locator('.swatch-btn').first.click(); page.locator('.palette:not(.hidden) button').nth(2).click()
-        page.wait_for_timeout(200)
+        # 7. old Phases link goes to the Planner; colour from the ••• menu
+        tid = db['trips'][0]['id']
+        page.goto(U + '#/trip/' + tid + '/phases'); page.wait_for_selector('.pcol')
+        ok(page.url.endswith('#/trip/' + tid), 'old Phases link opens the Planner')
+        page.locator('.pcol').nth(0).locator('button[aria-label^="More for"]').click()
+        page.click('.pmenu:not(.hidden) button:has-text("Colour & photo")')
+        page.click('.cp-swatches button[aria-label="Tangerine"]'); page.click('.modal button[type=submit]'); page.wait_for_timeout(200)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
-        ok(any(ph['name'] == 'Lisbon & Sintra' and ph['colour'] == '#C24A00' for ph in db['phases']), 'phase renamed and recoloured')
-        ok('Apr 5 → Apr 9, 2027 · 5 days' in page.inner_text('.phase-row'), 'phase dates from its days')
-        page.screenshot(path=str(SHOTS / '06-phases.png'), full_page=True)
+        ok(any(ph['name'] == 'Lisbon & Sintra' and ph['colour'] == '#C24A00' for ph in db['phases']), 'phase recoloured')
+        page.screenshot(path=str(SHOTS / '06-planner.png'), full_page=True)
 
         # 8a. Edit dates: move the start date — the whole trip moves, plans stay on their day of the trip
-        page.click('a.tab:has-text("Itinerary")'); page.wait_for_selector('table.itin')
+        page.click('.fnav a:has-text("Itinerary")'); page.wait_for_selector('table.itin')
         page.click('.trip-head .link-btn:has-text("Edit dates")')
         page.screenshot(path=str(SHOTS / '06b-edit-dates.png'))
         page.fill('.dates-editor input[type=date]', '2027-04-08'); page.dispatch_event('.dates-editor input[type=date]', 'change')
@@ -127,9 +138,9 @@ try:
         ok(True, 'undo puts the start date back')
         # 8b. length: + adds a day at the end, – removes it; a day with plans asks first
         page.click('.dates-editor button[aria-label="One day more"]')
-        page.wait_for_function("document.querySelectorAll('table.itin tbody tr').length === 15")
+        page.wait_for_function("document.querySelector('.trip-head .meta').textContent.includes('· 15 days')")
         page.click('.dates-editor button[aria-label="One day less"]')
-        page.wait_for_function("document.querySelectorAll('table.itin tbody tr').length === 14")
+        page.wait_for_function("document.querySelector('.trip-head .meta').textContent.includes('· 14 days')")
         page.evaluate("""() => { const db = JSON.parse(localStorage.getItem('fake:db')); db.days.find(d => d.idx === 13).plan = 'Fly home'; localStorage.setItem('fake:db', JSON.stringify(db)); }""")
         page.reload(); page.wait_for_selector('table.itin')
         page.click('.trip-head .link-btn:has-text("Edit dates")')
@@ -137,7 +148,7 @@ try:
         ok(page.is_visible('.modal:has-text("has plans")'), 'warns before deleting a day with plans')
         page.screenshot(path=str(SHOTS / '07-dates-warn.png'))
         page.click('.modal .btn.danger')
-        page.wait_for_function("document.querySelectorAll('table.itin tbody tr').length === 13")
+        page.wait_for_function("document.querySelector('.trip-head .meta').textContent.includes('· 13 days')")
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
         t = db['trips'][0]
         ok(t['length_days'] == 13 and t['end_date'] == '2027-04-17' and len(db['days']) == 13, 'trip shortened to 13 days')
@@ -165,8 +176,9 @@ try:
         card = page.inner_text('.trip-card:has-text("Someday Japan")')
         ok('no dates yet' in card.lower() and '14 days · dates open' in card, f'undated trip card ({card!r})')
         page.click('.trip-card:has-text("Someday Japan")'); page.wait_for_selector('.planner')
-        page.click('a.tab:has-text("Itinerary")'); page.wait_for_selector('table.itin')
-        ok(len(page.query_selector_all('table.itin tbody tr')) == 14 and page.is_visible('textarea[aria-label="Location for Day 3"]'), 'undated trip opens with Day N labels')
+        ok(page.is_visible('.tray-day:has-text("DAY")') and len(page.query_selector_all('.tray-day')) == 14, 'undated trip: days are DAY 1, DAY 2…')
+        page.click('.fnav a:has-text("Itinerary")'); page.wait_for_selector('.itin-empty')
+        ok('14 days · no dates yet' in page.inner_text('.itin-empty'), 'undated empty itinerary')
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
 
         # 9c. apply_layout in the fake backend (same rules as the database)

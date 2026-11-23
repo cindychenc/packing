@@ -22,8 +22,6 @@
   let authReady = false;
   let view = null;           // what is on screen, for cleanup
   let tripData = null;       // { trip, days, phases } for the open trip
-  let selection = new Set(); // day ids ticked in the Itinerary
-  let anchor = null;         // last ticked day index, for shift-click ranges
 
   /* ───────────── tiny DOM helper ───────────── */
   function h(tag, attrs, ...kids) {
@@ -322,7 +320,7 @@
 
   async function tripView(id, tab) {
     if (!tripData || tripData.trip.id !== id) {
-      loading(); selection = new Set(); anchor = null; editingDates = false; settingStart = false;
+      loading(); editingDates = false; settingStart = false;
       try { tripData = await loadTrip(id); }
       catch (e) { show(topbar(), h('main', null, h('div', { class: 'notice warn' }, 'Couldn\'t load this trip: ' + errText(e)))); return; }
       if (!tripData) {
@@ -383,11 +381,7 @@
     days.forEach(d => { const last = counts[counts.length - 1]; if (last && last.id === (d.phase_id || '')) last.n++; else counts.push({ id: d.phase_id || '', n: 1 }); });
     const used = orderedPhases().filter(p => phaseSpan(p));
 
-    const tabs = h('nav', { class: 'tabs' },
-      h('a', { class: 'tab' + (tab === 'planner' ? ' on' : ''), href: '#/trip/' + trip.id }, 'Planner'),
-      h('a', { class: 'tab' + (tab === 'itinerary' ? ' on' : ''), href: '#/trip/' + trip.id + '/itinerary' }, 'Itinerary'),
-      h('a', { class: 'tab' + (tab === 'phases' ? ' on' : ''), href: '#/trip/' + trip.id + '/phases' }, 'Phases'),
-      ['Bookings', 'Checklist', 'Share'].map(n => h('span', { class: 'tab soon', title: 'Coming soon' }, n, h('span', { class: 'soon-tag' }, 'Soon'))));
+
 
     show(topbar([h('a', { class: 'crumb', href: '#/' }, 'My trips'), h('span', { class: 'crumb-sep' }, '/'), h('span', { class: 'crumb-current' }, trip.name)]),
       h('main', null,
@@ -405,11 +399,10 @@
           h('div', { class: 'phase-bar', 'aria-hidden': 'true' }, counts.map(c => {
             const p = c.id && phaseById(c.id);
             return h('span', { style: { flex: c.n, background: p ? p.colour || '#C9C9C9' : 'transparent' }, title: p ? pname(p) : '' });
-          })),
-          h('div', { class: 'phase-legend' }, used.map(p => h('span', null, h('i', { style: { background: p.colour || '#C9C9C9' } }), pname(p))))
+          }))
         ] : null,
-        tabs,
-        tab === 'phases' ? phasesTab() : tab === 'planner' ? plannerTab() : itineraryTab()));
+        tab === 'planner' ? plannerTab() : itineraryTab()),
+      bottomNav(trip, tab));
   }
 
   /* ───────────── Itinerary tab ───────────── */
@@ -440,227 +433,114 @@
   const dayRow = d => ({ id: d.id, trip_id: d.trip_id, idx: d.idx, phase_id: d.phase_id || null,
     location: d.location || null, plan: d.plan || null, notes: d.notes || null });
 
+  // Itinerary (wireframe frames 8–9): every day in a sheet-like grid, grouped by phase.
   function itineraryTab() {
-    const { days } = tripData;
-    const today = todayIso();
+    const L = currentLayout(), t = tripData.trip;
     saveState = h('span', { class: 'save-state' });
-    const timers = {};
+    const shortDay = idx => (t.start_date ? md(LAYOUT.dateAt(t.start_date, idx)) : 'Day ' + (idx + 1));
+    const span = (a, b) => (a === b ? shortDay(a) : shortDay(a) + ' – ' + shortDay(b));
+
+    if (!L.phases.length) {
+      return h('section', { class: 'itin-empty' },
+        h('h2', null, 'Nothing on the itinerary yet'),
+        h('p', null, plural(t.length_days, 'day') + (t.start_date ? ' · ' + span(0, t.length_days - 1) : ' · no dates yet')),
+        h('div', { class: 'ghosts', 'aria-hidden': 'true' }, [0.6, 0.45, 0.3].map((o, k) => h('div', { class: 'ghost', style: { opacity: o } },
+          h('span', { class: 'g-box' }), h('span', { class: 'g-bar', style: { width: [70, 55, 62][k] + '%' } }), h('span', { class: 'g-bar', style: { width: [85, 65, 40][k] + '%' } })))),
+        h('a', { class: 'btn primary', href: '#/trip/' + t.id }, 'Start planning'),
+        h('div', { class: 'muted', style: { marginTop: '10px', fontSize: '13px' } }, 'Your days show up here as soon as they\'re in a phase.'));
+    }
 
     const autosize = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
-    const cellSave = (d, field, ta, now) => {
-      const key = d.id + field;
-      clearTimeout(timers[key]);
+    const timers = {};
+    const fieldSave = (row, field, ta, now) => {
+      clearTimeout(timers[row.id + field]);
       const run = () => {
-        const v = ta.value.replace(/\s+$/, '');
-        if ((d[field] || '') === v) return;
-        d[field] = v || null;
-        saveDays([dayRow(d)]);
+        const v = ta.value.replace(/\s+$/, '') || null;
+        if ((row[field] || null) === v) return;
+        row[field] = v; saveDayField(row.id, { [field]: v });
       };
-      if (now) run(); else { setSave('saving', 'Editing…'); timers[key] = setTimeout(run, 700); }
+      if (now) run(); else { setSave('saving', 'Editing…'); timers[row.id + field] = setTimeout(run, 700); }
     };
 
-    const table = h('table', { class: 'itin' });
-    const head = h('tr', null, h('th', { class: 'c-day' }, 'Day'), h('th', { class: 'c-date' }, 'Date'), h('th', { class: 'c-phase' }, 'Phase'),
-      h('th', { class: 'c-loc' }, 'Location'), h('th', null, 'Plan'), h('th', { class: 'c-notes notes-col' }, 'Notes'));
     const body = h('tbody');
-    table.append(h('colgroup', null, h('col', { class: 'c-day' }), h('col', { class: 'c-date' }), h('col', { class: 'c-phase' }),
-      h('col', { class: 'c-loc' }), h('col'), h('col', { class: 'c-notes' })), h('thead', null, head), body);
-
-    const tools = h('div', { class: 'grid-tools' });
-    const renderTools = () => {
-      const n = selection.size;
-      const kids = [];
-      if (n) {
-        const sel = h('select', { 'aria-label': 'Phase for the selected days' },
-          h('option', { value: '' }, 'No phase'),
-          orderedPhases().map(p => h('option', { value: p.id }, pname(p))),
-          h('option', { value: '__new' }, '+ New phase…'));
-        kids.push(h('div', { class: 'selbar' }, plural(n, 'day') + ' selected', h('span', { class: 'muted', style: { color: '#BBB', fontWeight: 500 } }, 'Phase:'), sel,
-          h('button', { class: 'btn small', onclick: async () => {
-            let pid = sel.value || null;
-            if (pid === '__new') { pid = await addPhase(); if (!pid) return; }
-            const rows = days.filter(d => selection.has(d.id));
-            rows.forEach(d => { d.phase_id = pid; });
-            selection = new Set(); anchor = null;
-            if (await saveDays(rows.map(dayRow))) renderTrip('itinerary');
-          } }, 'Set phase'),
-          h('button', { class: 'btn small ghost', style: { color: '#fff' }, onclick: () => { selection = new Set(); anchor = null; refreshSel(); } }, 'Clear')));
-      } else {
-        kids.push(h('span', { class: 'muted' }, 'Tick days to give them a phase. Paste rows from a spreadsheet into Location, Plan or Notes.'));
-      }
-      kids.push(h('div', { class: 'spacer' }), saveState);
-      tools.replaceChildren(...kids);
-    };
-    const refreshSel = () => {
-      body.querySelectorAll('tr').forEach(tr => tr.classList.toggle('sel', selection.has(tr.dataset.id)));
-      renderTools();
-    };
-
-    const fieldBoxes = {};   // `${index}:${field}` -> textarea, for Enter-to-move and paste
-    days.forEach((d, i) => {
-      const prev = days[i - 1];
-      const p = d.phase_id && phaseById(d.phase_id);
-      const tr = h('tr', { 'data-id': d.id, class: [selection.has(d.id) ? 'sel' : '', d.date && d.date === today ? 'today' : '',
-        prev && prev.phase_id !== d.phase_id ? 'phase-start' : ''].join(' ').trim() || null });
-
-      const dayCell = h('div', { class: 'cell-day', role: 'checkbox', 'aria-checked': String(selection.has(d.id)), tabindex: '0',
-        title: 'Select (shift-click for a range)',
-        onclick: e => tick(i, e.shiftKey), onkeydown: e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); tick(i, e.shiftKey); } } },
-        h('span', { class: 'tick' }), String(i + 1));
-
-      const phaseSel = h('select', { class: 'phase-select' + (p ? '' : ' none'), 'aria-label': 'Phase for ' + dayName(d),
-        style: { backgroundImage: p ? dot(p.colour) : dot('#E0E0E0') } },
-        h('option', { value: '' }, 'No phase'),
-        orderedPhases().map(ph => h('option', { value: ph.id, selected: ph.id === d.phase_id }, pname(ph))),
-        h('option', { value: '__new' }, '+ New phase…'));
-      phaseSel.addEventListener('change', async () => {
-        let pid = phaseSel.value || null;
-        if (pid === '__new') { pid = await addPhase(); if (!pid) { phaseSel.value = d.phase_id || ''; return; } }
-        d.phase_id = pid;
-        if (await saveDays([dayRow(d)])) renderTrip('itinerary');
-      });
-
-      const cells = DAY_FIELDS.map((f, j) => {
-        const ta = h('textarea', { class: 'edit' + (f === 'location' ? ' loc' : ''), rows: 1, spellcheck: f !== 'location',
-          'aria-label': f[0].toUpperCase() + f.slice(1) + ' for ' + dayName(d),
-          placeholder: f === 'location' ? (prev && prev.location ? '' : 'Where are you?') : f === 'plan' ? '' : '' });
-        ta.value = d[f] || '';
-        fieldBoxes[i + ':' + f] = ta;
-        ta.addEventListener('input', () => { autosize(ta); cellSave(d, f, ta, false); });
-        ta.addEventListener('blur', () => cellSave(d, f, ta, true));
-        ta.addEventListener('keydown', e => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
-            e.preventDefault();
-            const next = fieldBoxes[(i + 1) + ':' + f]; if (next) next.focus(); else ta.blur();
-          } else if (e.key === 'Escape') ta.blur();
-          else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            const to = fieldBoxes[(i + (e.key === 'ArrowUp' ? -1 : 1)) + ':' + f]; if (to) to.focus();
-          }
-        });
-        ta.addEventListener('paste', e => {
-          const text = (e.clipboardData || window.clipboardData).getData('text');
-          if (!/[\t\n]/.test(text.replace(/\r?\n$/, ''))) return;   // a single value: normal paste
-          e.preventDefault();
-          const lines = text.replace(/\r/g, '').replace(/\n$/, '').split('\n');
-          const changed = new Map();
-          lines.forEach((line, r) => {
-            const day = days[i + r]; if (!day) return;
-            line.split('\t').forEach((val, c) => {
-              const field = DAY_FIELDS[j + c]; if (!field) return;
-              day[field] = val.trim() || null;
-              const box = fieldBoxes[(i + r) + ':' + field];
-              if (box) { box.value = day[field] || ''; autosize(box); }
-              changed.set(day.id, day);
-            });
-          });
-          const skipped = Math.max(0, i + lines.length - days.length);
-          saveDays([...changed.values()].map(dayRow)).then(ok => {
-            if (ok) toast('Pasted into ' + plural(changed.size, 'day') + (skipped ? ' · ' + plural(skipped, 'row') + ' past the last day left out' : ''));
-          });
-        });
-        return h('td', { class: f === 'notes' ? 'notes-col' : null }, ta);
-      });
-
-      tr.append(h('td', null, dayCell),
-        h('td', null, h('div', { class: 'cell-date' }, d.date ? [h('span', { class: 'wd' }, wd(d.date)), md(d.date)] : h('span', { class: 'wd' }, '—'))),
-        h('td', null, h('div', { class: 'cell-phase' }, phaseSel)),
-        ...cells);
-      body.append(tr);
-    });
-
-    function tick(i, shift) {
-      const id = days[i].id;
-      if (shift && anchor != null) {
-        const [a, b] = anchor < i ? [anchor, i] : [i, anchor];
-        for (let k = a; k <= b; k++) selection.add(days[k].id);
-      } else if (selection.has(id)) selection.delete(id);
-      else selection.add(id);
-      anchor = i;
-      refreshSel();
-      body.querySelectorAll('.cell-day').forEach((c, k) => c.setAttribute('aria-checked', String(selection.has(days[k].id))));
-    }
-
-    renderTools();
-    requestAnimationFrame(() => body.querySelectorAll('textarea').forEach(autosize));
-    return h('section', null, tools, table);
-  }
-
-  /* ───────────── Phases tab ───────────── */
-  async function addPhase(name) {
-    const used = tripData.phases.map(p => (p.colour || '').toUpperCase());
-    const colour = (PALETTE.find(c => used.indexOf(c[1]) < 0) || PALETTE[tripData.phases.length % PALETTE.length])[1];
-    const sort = tripData.phases.reduce((m, p) => Math.max(m, p.sort || 0), 0) + 1;
-    const { data, error } = await sb.from('phases')
-      .insert({ trip_id: tripData.trip.id, name: name || 'Phase ' + (tripData.phases.length + 1), colour, sort }).select().single();
-    if (error) { toast('Couldn\'t add the phase: ' + errText(error), true); return null; }
-    tripData.phases.push(data);
-    return data.id;
-  }
-  async function savePhase(p, patch) {
-    Object.assign(p, patch);
-    const { error } = await sb.from('phases').update(patch).eq('id', p.id);
-    if (error) { toast('Couldn\'t save: ' + errText(error), true); return false; }
-    return true;
-  }
-
-  function phasesTab() {
-    const list = h('div', { class: 'phase-list' });
-    const phases = orderedPhases();
-    if (!phases.length) {
-      return h('section', null, h('div', { class: 'empty', style: { margin: '28px 0', maxWidth: '880px' } },
-        h('h2', null, 'Split the trip into phases'),
-        h('p', null, 'A phase is a stretch of the trip, like "Patagonia" or "Lisbon & coast". Each gets a colour in Carryon.'),
-        h('button', { class: 'btn primary', onclick: async () => { if (await addPhase()) renderTrip('phases'); } }, svg(ICON.plus), 'Add a phase')));
-    }
-    phases.forEach(p => {
-      const span = phaseSpan(p);
-      const name = h('input', { class: 'name-input', value: p.name || '', placeholder: 'Unnamed phase', maxlength: 60, 'aria-label': 'Phase name' });
+    const order = [];            // day rows in screen order, for multi-row paste
+    const boxes = {};            // `${order index}:${field}` -> textarea
+    L.phases.forEach((p, i) => {
+      const start = LAYOUT.startIdx(L, i), n = p.days.length;
+      const name = h('input', { class: 'gname', value: p.name || '', placeholder: LAYOUT.suggestion(i), maxlength: 60, 'aria-label': 'Phase ' + (i + 1) + ' name' });
       name.addEventListener('change', async () => {
-        const v = name.value.trim();
-        if (!v) { name.value = p.name || ''; return; }
-        if (await savePhase(p, { name: v })) toast('Saved');
+        const v = name.value.trim() || null, row = tripData.phases.find(x => x.id === p.id);
+        if (row) row.name = v;
+        addBtn.textContent = '+ Add a day to ' + (v || LAYOUT.suggestion(i));
+        const { error } = await sb.from('phases').update({ name: v }).eq('id', p.id);
+        if (error) toast('Couldn\'t save the name: ' + errText(error), true);
       });
       name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
-
-      const swatch = h('button', { class: 'swatch-btn', style: { background: p.colour || '#C9C9C9' }, 'aria-label': 'Colour for ' + pname(p) });
-      const pal = h('div', { class: 'palette hidden' }, PALETTE.map(([label, c]) =>
-        h('button', { title: label, 'aria-label': label, class: (p.colour || '').toUpperCase() === c ? 'on' : null, style: { background: c },
-          onclick: async e => { e.stopPropagation(); pal.classList.add('hidden'); if (await savePhase(p, { colour: c })) renderTrip('phases'); } })));
-      swatch.addEventListener('click', e => { e.stopPropagation(); document.querySelectorAll('.palette').forEach(x => x !== pal && x.classList.add('hidden')); pal.classList.toggle('hidden'); });
-      document.addEventListener('click', () => pal.classList.add('hidden'));
-
-      const url = h('input', { class: 'input', type: 'url', placeholder: 'Header photo URL (https://…), optional', value: p.photo_url || '' });
-      const credit = h('input', { class: 'input', placeholder: 'Photo credit', value: p.photo_credit || '', style: { maxWidth: '200px' } });
-      url.addEventListener('change', async () => {
-        const v = url.value.trim();
-        if (v && !/^https:\/\//i.test(v)) { toast('The photo link has to start with https://', true); url.value = p.photo_url || ''; return; }
-        if (await savePhase(p, { photo_url: v || null })) toast('Saved');
+      const addBtn = h('button', { class: 'add-row-btn', onclick: () => tryLayout(LAYOUT.addDayToPhase(currentLayout(), i)) }, '+ Add a day to ' + LAYOUT.nameOf(L, i));
+      body.append(h('tr', { class: 'ghead', 'data-phase': p.id }, h('td', { colspan: 4 }, h('div', { class: 'ghead-in' },
+        h('i', { class: 'pdot', style: { background: p.colour || '#C9C9C9' } }), name, h('span', { class: 'gspan' }, span(start, start + n - 1) + ' · ' + plural(n, 'day'))))));
+      p.days.forEach((d, j) => {
+        const idx = start + j, row = tripData.days.find(x => x.id === d.id), date = LAYOUT.dateAt(t.start_date, idx), k = order.length;
+        order.push(row);
+        const cells = DAY_FIELDS.map((f, c) => {
+          const ta = h('textarea', { class: 'edit' + (f === 'location' ? ' loc' : ''), rows: 1, spellcheck: f !== 'location',
+            'aria-label': f[0].toUpperCase() + f.slice(1) + ' for ' + shortDay(idx), placeholder: f === 'location' ? 'Where are you?' : '' });
+          ta.value = row[f] || '';
+          boxes[k + ':' + f] = ta;
+          ta.addEventListener('input', () => { autosize(ta); fieldSave(row, f, ta, false); });
+          ta.addEventListener('blur', () => fieldSave(row, f, ta, true));
+          ta.addEventListener('keydown', e => { if (e.key === 'Escape') ta.blur(); });
+          ta.addEventListener('paste', e => pasteRows(e, k, c));
+          return h('td', { class: f === 'notes' ? 'notes-col' : null }, ta);
+        });
+        body.append(h('tr', { 'data-id': d.id, class: date && date === todayIso() ? 'today' : null },
+          h('td', null, h('div', { class: 'dtile' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)])),
+          ...cells));
       });
-      credit.addEventListener('change', async () => { if (await savePhase(p, { photo_credit: credit.value.trim() || null })) toast('Saved'); });
-
-      const del = h('button', { class: 'icon-btn', 'aria-label': 'Delete ' + pname(p), title: 'Delete phase', onclick: () =>
-        confirmBox('Delete "' + pname(p) + '"?', span ? 'Its ' + plural(span.n, 'day') + ' keep their plans but won\'t have a phase.' : 'No days use this phase yet.',
-          'Delete phase', async () => {
-            const { error } = await sb.from('phases').delete().eq('id', p.id);
-            if (error) { toast('Couldn\'t delete: ' + errText(error), true); return; }
-            tripData.phases = tripData.phases.filter(x => x.id !== p.id);
-            tripData.days.forEach(d => { if (d.phase_id === p.id) d.phase_id = null; });
-            renderTrip('phases');
-          }, true) }, svg(ICON.trash));
-
-      list.append(h('div', { class: 'phase-row' },
-        h('div', { class: 'swatch-wrap' }, swatch, pal),
-        name,
-        h('div', { class: 'span' + (span ? '' : ' none') }, span ? (span.start ? range(span.start, span.end) : 'Days ' + (span.first + 1) + '–' + (span.last + 1)) + ' · ' + plural(span.n, 'day') : 'No days yet'),
-        del,
-        h('div', null),
-        h('div', { class: 'photo' }, url, credit)));
+      body.append(h('tr', { class: 'addrow' }, h('td', null), h('td', { colspan: 3 }, addBtn)));
     });
-    return h('section', null,
-      list,
-      h('div', { style: { marginTop: '14px' } }, h('button', { class: 'btn', onclick: async () => { if (await addPhase()) renderTrip('phases'); } }, svg(ICON.plus), 'Add a phase')),
-      h('p', { class: 'phase-hint' }, 'A phase\'s dates come from its days. To change them, go to Itinerary, tick the days and choose the phase.'));
+
+    // Several rows copied from a spreadsheet: fill down from this cell (and across Location → Plan → Notes).
+    function pasteRows(e, k, c) {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      if (!/[\t\n]/.test(text.replace(/\r?\n$/, ''))) return;   // a single value: normal paste
+      e.preventDefault();
+      const lines = text.replace(/\r/g, '').replace(/\n$/, '').split('\n');
+      const changed = new Map();
+      lines.forEach((line, r) => {
+        const row = order[k + r]; if (!row) return;
+        line.split('\t').forEach((val, cc) => {
+          const field = DAY_FIELDS[c + cc]; if (!field) return;
+          row[field] = val.trim() || null;
+          const box = boxes[(k + r) + ':' + field];
+          if (box) { box.value = row[field] || ''; autosize(box); }
+          changed.set(row.id, Object.assign(changed.get(row.id) || {}, { [field]: row[field] }));
+        });
+      });
+      const skipped = Math.max(0, k + lines.length - order.length);
+      Promise.all([...changed].map(([id, patch]) => saveDayField(id, patch))).then(oks => {
+        if (oks.every(Boolean)) toast('Pasted into ' + plural(changed.size, 'day') + (skipped ? ' · ' + plural(skipped, 'row') + ' past the last planned day left out' : ''));
+      });
+    }
+
+    let free = null;
+    if (L.free.length) {
+      const fs = LAYOUT.startIdx(L, L.phases.length);
+      free = h('div', { class: 'freebox' },
+        h('div', null, h('strong', null, plural(L.free.length, 'more day') + ' to plan'), h('div', { class: 'muted' }, span(fs, fs + L.free.length - 1) + ' · not in a phase yet')),
+        h('button', { class: 'btn primary', onclick: () => {
+          if (tryLayout(LAYOUT.insertPhaseAt(currentLayout(), currentLayout().phases.length, 1)))
+            setTimeout(() => { const all = document.querySelectorAll('.gname'); if (all.length) all[all.length - 1].focus(); }, 30);
+        } }, '+ Add new phase'));
+    }
+
+    const table = h('table', { class: 'itin grouped' },
+      h('colgroup', null, h('col', { class: 'c-tile' }), h('col', { class: 'c-loc' }), h('col'), h('col', { class: 'c-notes' })),
+      h('thead', null, h('tr', null, h('th', null, 'Day'), h('th', null, 'Location'), h('th', null, 'Plan'), h('th', { class: 'notes-col' }, 'Notes'))), body);
+    requestAnimationFrame(() => body.querySelectorAll('textarea').forEach(autosize));
+    return h('section', { class: 'itin-wrap' },
+      h('div', { class: 'grid-tools' }, h('span', { class: 'muted' }, 'Paste rows from a spreadsheet into Location, Plan or Notes.'), h('div', { class: 'spacer' }), saveState),
+      h('div', { class: 'itin-card' }, table, free));
   }
 
   /* ───────────── Planner tab (wireframe frames 4–7) ─────────────
@@ -1037,14 +917,22 @@
   }
 
   /* ───────────── routing ───────────── */
-  function currentTab() { const m = location.hash.match(/\/(phases|itinerary)$/); return m ? m[1] : 'planner'; }
+  function currentTab() { return /\/itinerary$/.test(location.hash) ? 'itinerary' : 'planner'; }
+  // Floating nav at the bottom of a trip: Planner · Itinerary · (Bookings, Checklist, Share: soon)
+  function bottomNav(trip, tab) {
+    return h('nav', { class: 'fnav', 'aria-label': 'Trip sections' },
+      h('a', { class: 'fn' + (tab === 'planner' ? ' on' : ''), href: '#/trip/' + trip.id, 'aria-current': tab === 'planner' ? 'page' : null }, 'Planner'),
+      h('a', { class: 'fn' + (tab === 'itinerary' ? ' on' : ''), href: '#/trip/' + trip.id + '/itinerary', 'aria-current': tab === 'itinerary' ? 'page' : null }, 'Itinerary'),
+      ['Bookings', 'Checklist', 'Share'].map(n => h('span', { class: 'fn off', title: 'Coming soon' }, n, h('span', { class: 'soon-tag' }, 'Soon'))));
+  }
   function route() {
     if (!authReady) return;
     const hash = location.hash;
     if (/access_token=|error_code=|type=magiclink/.test(hash)) return;   // the auth library is reading the link
     if (!session) { signInView(); return; }
     const m = hash.match(/^#\/trip\/([0-9a-f-]{36})(?:\/(phases|itinerary))?$/i);
-    if (m) tripView(m[1], m[2] || 'planner');
+    if (m && m[2] === 'phases') { history.replaceState(null, '', '#/trip/' + m[1]); tripView(m[1], 'planner'); }   // old Phases tab → Planner
+    else if (m) tripView(m[1], m[2] || 'planner');
     else { tripData = null; tripsView(); }
   }
   window.addEventListener('hashchange', route);
