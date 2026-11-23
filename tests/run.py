@@ -72,8 +72,8 @@ try:
             document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }""")
         page.wait_for_timeout(300)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
-        byDate = {d['date']: d for d in db['days']}
-        ok(byDate['2027-04-07']['location'] == 'Sintra' and byDate['2027-04-08']['plan'] == 'Roman temple' and byDate['2027-04-09']['location'] == 'Monsaraz', 'multi-row paste saved')
+        byIdx = {d['idx']: d for d in db['days']}   # Apr 5 = day 0
+        ok(byIdx[2]['location'] == 'Sintra' and byIdx[3]['plan'] == 'Roman temple' and byIdx[4]['location'] == 'Monsaraz', 'multi-row paste saved')
         ok(loc(3).input_value() == 'Évora', 'pasted values shown in grid')
 
         # 6. tick days 1–5 (shift-click), set a new phase
@@ -99,26 +99,62 @@ try:
         ok('Apr 5 → Apr 9, 2027 · 5 days' in page.inner_text('.phase-row'), 'phase dates from its days')
         page.screenshot(path=str(SHOTS / '06-phases.png'), full_page=True)
 
-        # 8. change dates so days with plans fall outside
+        # 8a. move the start date: the whole trip moves, plans stay on their day of the trip
         page.click('a.tab:has-text("Itinerary")'); page.wait_for_selector('table.itin')
         page.click('button[aria-label="Trip menu"]'); page.click('.menu button:has-text("Change dates")')
         page.locator('.modal input[type=date]').nth(0).fill('2027-04-08')
+        page.locator('.modal input[type=date]').nth(1).fill('2027-04-21')
         page.click('.modal button[type=submit]')
-        ok(page.is_visible('text=outside the new dates'), 'warns about days with plans')
+        page.wait_for_function("document.querySelectorAll('table.itin tbody tr').length === 14")
+        ok(page.input_value('textarea[aria-label="Location for Apr 8"]') == 'Lisbon', 'start moved, plans moved with their days')
+        # 8b. shorten so days with plans fall off the end
+        page.click('button[aria-label="Trip menu"]'); page.click('.menu button:has-text("Change dates")')
+        page.locator('.modal input[type=date]').nth(1).fill('2027-04-09')
+        page.click('.modal button[type=submit]')
+        ok(page.is_visible('text=at the end of the trip'), 'warns about days with plans')
         page.screenshot(path=str(SHOTS / '07-dates-warn.png'))
         page.click('.modal button[type=submit]')
-        page.wait_for_function("document.querySelectorAll('table.itin tbody tr').length === 11")
-        ok(True, 'dates changed to 11 days')
+        page.wait_for_function("document.querySelectorAll('table.itin tbody tr').length === 2")
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        t = db['trips'][0]
+        ok(t['length_days'] == 2 and t['end_date'] == '2027-04-09' and len(db['days']) == 2, 'dates changed to 2 days')
 
         # 9. My trips card
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
         ok('Portugal in spring' in page.inner_text('.trip-card'), 'trip card shown')
         page.screenshot(path=str(SHOTS / '08-trips.png'))
 
+        # 9b. a trip without dates (made the way the new-trip pop-up will make it)
+        page.evaluate("""() => { const db = JSON.parse(localStorage.getItem('fake:db')); const id = crypto.randomUUID();
+            db.trips.push({ id, name: 'Someday Japan', start_date: null, end_date: null, length_days: 14, archived: false, owner_id: 'x', updated_at: new Date().toISOString() });
+            for (let i = 0; i < 14; i++) db.days.push({ id: crypto.randomUUID(), trip_id: id, idx: i, phase_id: null, location: null, plan: null, notes: null });
+            localStorage.setItem('fake:db', JSON.stringify(db)); }""")
+        page.reload(); page.wait_for_selector('.trip-card >> nth=1')
+        card = page.inner_text('.trip-card:has-text("Someday Japan")')
+        ok('no dates yet' in card.lower() and '14 days · dates open' in card, f'undated trip card ({card!r})')
+        page.click('.trip-card:has-text("Someday Japan")'); page.wait_for_selector('table.itin')
+        ok(len(page.query_selector_all('table.itin tbody tr')) == 14 and page.is_visible('textarea[aria-label="Location for Day 3"]'), 'undated trip opens with Day N labels')
+        page.click('a.crumb'); page.wait_for_selector('.trip-card')
+
+        # 9c. apply_layout in the fake backend (same rules as the database)
+        res = page.evaluate("""async () => {
+            const db = JSON.parse(localStorage.getItem('fake:db')); const t = db.trips.find(x => x.name === 'Someday Japan');
+            const rows = db.days.filter(d => d.trip_id === t.id).map(d => ({ id: d.id, idx: d.idx, phase_id: null }));
+            const L = SuitcaseLayout; let lay = L.fromRows([], rows); lay = L.insertPhaseAt(lay, 0, 4).layout; lay = L.insertPhaseAt(lay, 1, 3).layout;
+            const r = L.toRows(lay); const c = supabase.createClient();
+            const ok1 = await c.rpc('apply_layout', { p_trip: t.id, p_expect: t.updated_at, p_phases: r.phases, p_days: r.days });
+            const stale = await c.rpc('apply_layout', { p_trip: t.id, p_expect: t.updated_at, p_phases: r.phases, p_days: r.days });
+            const bad = await c.rpc('apply_layout', { p_trip: t.id, p_expect: null, p_phases: r.phases, p_days: r.days.map((d, i) => Object.assign({}, d, { phase_id: i === 6 ? r.phases[0].id : d.phase_id })) });
+            const db2 = JSON.parse(localStorage.getItem('fake:db'));
+            return [ok1.error, stale.error && stale.error.message, bad.error && bad.error.message, db2.phases.filter(p => p.trip_id === t.id).length];
+        }""")
+        ok(res[0] is None and res[1] == 'LAYOUT_CHANGED' and res[2].startswith('BAD_LAYOUT') and res[3] == 2, f'apply_layout rules ({res})')
+
         # 10. delete
-        page.click('.trip-card'); page.wait_for_selector('table.itin')
+        page.click('.trip-card:has-text("Portugal")'); page.wait_for_selector('table.itin')
         page.click('button[aria-label="Trip menu"]'); page.click('.menu button:has-text("Delete trip")')
-        page.click('.modal .btn.danger'); page.wait_for_selector('.empty')
+        page.click('.modal .btn.danger'); page.wait_for_selector('.trip-card')
+        ok('Portugal' not in page.inner_text('main'), 'trip gone from My trips')
         ok(True, 'trip deleted')
 
         # narrow window

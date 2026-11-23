@@ -5,6 +5,7 @@
   'use strict';
 
   const CFG = window.SUITCASE_CONFIG;
+  const LAYOUT = window.SuitcaseLayout;
   const sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, {
     auth: { flowType: 'implicit', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true }
   });
@@ -65,6 +66,8 @@
     return md(a) + (sameYear ? '' : ', ' + A.getUTCFullYear()) + ' → ' + md(b) + (thisYear ? '' : ', ' + B.getUTCFullYear());
   }
   const plural = (n, w, p) => n + ' ' + (n === 1 ? w : (p || w + 's'));
+  // A day's label: "Apr 6" when the trip has dates, otherwise "Day 6".
+  const dayName = d => (d.date ? md(d.date) : 'Day ' + (d.idx + 1));
 
   /* ───────────── toast + modal ───────────── */
   let toastTimer;
@@ -172,7 +175,7 @@
   async function tripsView() {
     loading();
     const [t, p, d] = await Promise.all([
-      sb.from('trips').select('*').order('start_date', { ascending: true }),
+      sb.from('trips').select('*').order('start_date', { ascending: true, nullsFirst: false }),
       sb.from('phases').select('id, trip_id, colour, sort'),
       sb.from('days').select('trip_id, phase_id')
     ]);
@@ -190,9 +193,10 @@
       }), counts[''] ? h('span', { style: { flex: counts[''], background: 'transparent' } }) : null);
     };
     const card = trip => {
-      const total = diffDays(trip.start_date, trip.end_date) + 1;
+      const total = trip.length_days;
       let kicker, pill = null;
-      if (today < trip.start_date) { const n = diffDays(today, trip.start_date); kicker = n === 1 ? 'Tomorrow' : 'In ' + n + ' days'; }
+      if (!trip.start_date) kicker = 'No dates yet';
+      else if (today < trip.start_date) { const n = diffDays(today, trip.start_date); kicker = n === 1 ? 'Tomorrow' : 'In ' + n + ' days'; }
       else if (today <= trip.end_date) { kicker = 'Day ' + (diffDays(trip.start_date, today) + 1) + ' of ' + total; pill = h('span', { class: 'pill now dot' }, 'On the trip'); }
       else kicker = 'Finished';
       const phaseCount = p.data.filter(x => x.trip_id === trip.id).length;
@@ -201,12 +205,12 @@
         h('div', { class: 'body' },
           h('div', { class: 'kicker' }, kicker),
           h('div', { class: 'name' }, trip.name),
-          h('div', { class: 'dates' }, range(trip.start_date, trip.end_date)),
+          h('div', { class: 'dates' }, trip.start_date ? range(trip.start_date, trip.end_date) : plural(total, 'day') + ' · dates open'),
           h('div', { class: 'foot' }, pill, h('span', { class: 'pill' }, plural(total, 'day')),
             phaseCount ? h('span', { class: 'pill' }, plural(phaseCount, 'phase')) : null)));
     };
-    const live = trips.filter(x => !x.archived && x.end_date >= today);
-    const past = trips.filter(x => !x.archived && x.end_date < today).reverse();
+    const live = trips.filter(x => !x.archived && (!x.end_date || x.end_date >= today));
+    const past = trips.filter(x => !x.archived && x.end_date && x.end_date < today).reverse();
     const archived = trips.filter(x => x.archived);
     const newCard = h('button', { class: 'new-card', onclick: newTripModal }, h('span', { class: 'plus' }, svg(ICON.plus)), 'New trip');
 
@@ -269,7 +273,7 @@
           if (!dates.check()) return;
           create.disabled = true; create.textContent = 'Creating…';
           const { data, error } = await sb.from('trips')
-            .insert({ name: name.value.trim(), start_date: dates.s.value, end_date: dates.e.value, owner_id: session.user.id })
+            .insert({ name: name.value.trim(), start_date: dates.s.value, length_days: diffDays(dates.s.value, dates.e.value) + 1, owner_id: session.user.id })
             .select().single();
           if (error) { err.textContent = errText(error); err.classList.remove('hidden'); create.disabled = false; create.textContent = 'Create trip'; return; }
           close(); location.hash = '#/trip/' + data.id;
@@ -283,13 +287,18 @@
   async function loadTrip(id) {
     const [t, d, p] = await Promise.all([
       sb.from('trips').select('*').eq('id', id).maybeSingle(),
-      sb.from('days').select('*').eq('trip_id', id).order('date', { ascending: true }),
+      sb.from('days').select('*').eq('trip_id', id).order('idx', { ascending: true }),
       sb.from('phases').select('*').eq('trip_id', id).order('sort', { ascending: true })
     ]);
     const err = t.error || d.error || p.error;
     if (err) throw err;
     if (!t.data) return null;
+    datesFor(t.data, d.data);
     return { trip: t.data, days: d.data, phases: p.data };
+  }
+  // Each day's date (only on the client): the trip's start date + its position. None while the trip has no dates.
+  function datesFor(trip, days) {
+    days.forEach(d => { d.date = LAYOUT.dateAt(trip.start_date, d.idx); });
   }
 
   async function tripView(id, tab) {
@@ -308,15 +317,16 @@
   }
 
   const phaseById = id => tripData.phases.find(p => p.id === id);
+  const pname = p => (p && p.name) || 'Unnamed phase';
   function phaseSpan(phase) {
     const days = tripData.days.filter(d => d.phase_id === phase.id);
     if (!days.length) return null;
-    return { start: days[0].date, end: days[days.length - 1].date, n: days.length };
+    return { start: days[0].date, end: days[days.length - 1].date, first: days[0].idx, last: days[days.length - 1].idx, n: days.length };
   }
   function orderedPhases() {
     return tripData.phases.slice().sort((a, b) => {
       const sa = phaseSpan(a), sb2 = phaseSpan(b);
-      if (sa && sb2 && sa.start !== sb2.start) return sa.start < sb2.start ? -1 : 1;
+      if (sa && sb2 && sa.first !== sb2.first) return sa.first - sb2.first;
       if (sa && !sb2) return -1;
       if (!sa && sb2) return 1;
       return (a.sort || 0) - (b.sort || 0);
@@ -328,13 +338,14 @@
     const { trip, days } = tripData;
     const total = days.length, today = todayIso();
     let when;
-    if (today < trip.start_date) { const n = diffDays(today, trip.start_date); when = n === 1 ? 'Starts tomorrow' : 'Starts in ' + n + ' days'; }
+    if (!trip.start_date) when = 'No dates yet';
+    else if (today < trip.start_date) { const n = diffDays(today, trip.start_date); when = n === 1 ? 'Starts tomorrow' : 'Starts in ' + n + ' days'; }
     else if (today <= trip.end_date) when = 'Day ' + (diffDays(trip.start_date, today) + 1) + ' today';
     else when = 'Finished';
 
     const menuBox = h('div', { class: 'menu hidden' },
       h('button', { onclick: () => { hideMenu(); renameModal(); } }, 'Rename'),
-      h('button', { onclick: () => { hideMenu(); datesModal(); } }, 'Change dates'),
+      h('button', { onclick: () => { hideMenu(); datesModal(); } }, trip.start_date ? 'Change dates' : 'Set dates'),
       h('button', { onclick: () => { hideMenu(); toggleArchive(); } }, trip.archived ? 'Unarchive' : 'Archive'),
       h('hr'),
       h('button', { class: 'danger', onclick: () => { hideMenu(); deleteTrip(); } }, 'Delete trip'));
@@ -355,7 +366,7 @@
       h('main', null,
         h('div', { class: 'trip-head' },
           h('div', null, h('h1', null, trip.name),
-            h('div', { class: 'sub' }, range(trip.start_date, trip.end_date) + ' · ' + plural(total, 'day'),
+            h('div', { class: 'sub' }, (trip.start_date ? range(trip.start_date, trip.end_date) + ' · ' : '') + plural(total, 'day'),
               h('span', { class: 'pill' + (when.startsWith('Day') ? ' now dot' : '') }, when),
               trip.archived ? h('span', { class: 'pill' }, 'Archived') : null),
             trip.subtitle ? h('div', { class: 'muted', style: { marginTop: '4px' } }, trip.subtitle) : null),
@@ -364,9 +375,9 @@
         used.length ? [
           h('div', { class: 'phase-bar', 'aria-hidden': 'true' }, counts.map(c => {
             const p = c.id && phaseById(c.id);
-            return h('span', { style: { flex: c.n, background: p ? p.colour || '#C9C9C9' : 'transparent' }, title: p ? p.name : '' });
+            return h('span', { style: { flex: c.n, background: p ? p.colour || '#C9C9C9' : 'transparent' }, title: p ? pname(p) : '' });
           })),
-          h('div', { class: 'phase-legend' }, used.map(p => h('span', null, h('i', { style: { background: p.colour || '#C9C9C9' } }), p.name)))
+          h('div', { class: 'phase-legend' }, used.map(p => h('span', null, h('i', { style: { background: p.colour || '#C9C9C9' } }), pname(p))))
         ] : null,
         tabs,
         tab === 'phases' ? phasesTab() : itineraryTab()));
@@ -388,7 +399,7 @@
     if (!pending) setSave('saved', 'All changes saved');
     return true;
   }
-  const dayRow = d => ({ id: d.id, trip_id: d.trip_id, date: d.date, phase_id: d.phase_id || null,
+  const dayRow = d => ({ id: d.id, trip_id: d.trip_id, idx: d.idx, phase_id: d.phase_id || null,
     location: d.location || null, plan: d.plan || null, notes: d.notes || null });
 
   function itineraryTab() {
@@ -424,7 +435,7 @@
       if (n) {
         const sel = h('select', { 'aria-label': 'Phase for the selected days' },
           h('option', { value: '' }, 'No phase'),
-          orderedPhases().map(p => h('option', { value: p.id }, p.name)),
+          orderedPhases().map(p => h('option', { value: p.id }, pname(p))),
           h('option', { value: '__new' }, '+ New phase…'));
         kids.push(h('div', { class: 'selbar' }, plural(n, 'day') + ' selected', h('span', { class: 'muted', style: { color: '#BBB', fontWeight: 500 } }, 'Phase:'), sel,
           h('button', { class: 'btn small', onclick: async () => {
@@ -451,7 +462,7 @@
     days.forEach((d, i) => {
       const prev = days[i - 1];
       const p = d.phase_id && phaseById(d.phase_id);
-      const tr = h('tr', { 'data-id': d.id, class: [selection.has(d.id) ? 'sel' : '', d.date === today ? 'today' : '',
+      const tr = h('tr', { 'data-id': d.id, class: [selection.has(d.id) ? 'sel' : '', d.date && d.date === today ? 'today' : '',
         prev && prev.phase_id !== d.phase_id ? 'phase-start' : ''].join(' ').trim() || null });
 
       const dayCell = h('div', { class: 'cell-day', role: 'checkbox', 'aria-checked': String(selection.has(d.id)), tabindex: '0',
@@ -459,10 +470,10 @@
         onclick: e => tick(i, e.shiftKey), onkeydown: e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); tick(i, e.shiftKey); } } },
         h('span', { class: 'tick' }), String(i + 1));
 
-      const phaseSel = h('select', { class: 'phase-select' + (p ? '' : ' none'), 'aria-label': 'Phase for ' + md(d.date),
+      const phaseSel = h('select', { class: 'phase-select' + (p ? '' : ' none'), 'aria-label': 'Phase for ' + dayName(d),
         style: { backgroundImage: p ? dot(p.colour) : dot('#E0E0E0') } },
         h('option', { value: '' }, 'No phase'),
-        orderedPhases().map(ph => h('option', { value: ph.id, selected: ph.id === d.phase_id }, ph.name)),
+        orderedPhases().map(ph => h('option', { value: ph.id, selected: ph.id === d.phase_id }, pname(ph))),
         h('option', { value: '__new' }, '+ New phase…'));
       phaseSel.addEventListener('change', async () => {
         let pid = phaseSel.value || null;
@@ -473,7 +484,7 @@
 
       const cells = DAY_FIELDS.map((f, j) => {
         const ta = h('textarea', { class: 'edit' + (f === 'location' ? ' loc' : ''), rows: 1, spellcheck: f !== 'location',
-          'aria-label': f[0].toUpperCase() + f.slice(1) + ' for ' + md(d.date),
+          'aria-label': f[0].toUpperCase() + f.slice(1) + ' for ' + dayName(d),
           placeholder: f === 'location' ? (prev && prev.location ? '' : 'Where are you?') : f === 'plan' ? '' : '' });
         ta.value = d[f] || '';
         fieldBoxes[i + ':' + f] = ta;
@@ -514,7 +525,7 @@
       });
 
       tr.append(h('td', null, dayCell),
-        h('td', null, h('div', { class: 'cell-date' }, h('span', { class: 'wd' }, wd(d.date)), md(d.date))),
+        h('td', null, h('div', { class: 'cell-date' }, d.date ? [h('span', { class: 'wd' }, wd(d.date)), md(d.date)] : h('span', { class: 'wd' }, '—'))),
         h('td', null, h('div', { class: 'cell-phase' }, phaseSel)),
         ...cells);
       body.append(tr);
@@ -566,15 +577,15 @@
     }
     phases.forEach(p => {
       const span = phaseSpan(p);
-      const name = h('input', { class: 'name-input', value: p.name, maxlength: 60, 'aria-label': 'Phase name' });
+      const name = h('input', { class: 'name-input', value: p.name || '', placeholder: 'Unnamed phase', maxlength: 60, 'aria-label': 'Phase name' });
       name.addEventListener('change', async () => {
         const v = name.value.trim();
-        if (!v) { name.value = p.name; return; }
+        if (!v) { name.value = p.name || ''; return; }
         if (await savePhase(p, { name: v })) toast('Saved');
       });
       name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
 
-      const swatch = h('button', { class: 'swatch-btn', style: { background: p.colour || '#C9C9C9' }, 'aria-label': 'Colour for ' + p.name });
+      const swatch = h('button', { class: 'swatch-btn', style: { background: p.colour || '#C9C9C9' }, 'aria-label': 'Colour for ' + pname(p) });
       const pal = h('div', { class: 'palette hidden' }, PALETTE.map(([label, c]) =>
         h('button', { title: label, 'aria-label': label, class: (p.colour || '').toUpperCase() === c ? 'on' : null, style: { background: c },
           onclick: async e => { e.stopPropagation(); pal.classList.add('hidden'); if (await savePhase(p, { colour: c })) renderTrip('phases'); } })));
@@ -590,8 +601,8 @@
       });
       credit.addEventListener('change', async () => { if (await savePhase(p, { photo_credit: credit.value.trim() || null })) toast('Saved'); });
 
-      const del = h('button', { class: 'icon-btn', 'aria-label': 'Delete ' + p.name, title: 'Delete phase', onclick: () =>
-        confirmBox('Delete "' + p.name + '"?', span ? 'Its ' + plural(span.n, 'day') + ' keep their plans but won\'t have a phase.' : 'No days use this phase yet.',
+      const del = h('button', { class: 'icon-btn', 'aria-label': 'Delete ' + pname(p), title: 'Delete phase', onclick: () =>
+        confirmBox('Delete "' + pname(p) + '"?', span ? 'Its ' + plural(span.n, 'day') + ' keep their plans but won\'t have a phase.' : 'No days use this phase yet.',
           'Delete phase', async () => {
             const { error } = await sb.from('phases').delete().eq('id', p.id);
             if (error) { toast('Couldn\'t delete: ' + errText(error), true); return; }
@@ -603,7 +614,7 @@
       list.append(h('div', { class: 'phase-row' },
         h('div', { class: 'swatch-wrap' }, swatch, pal),
         name,
-        h('div', { class: 'span' + (span ? '' : ' none') }, span ? range(span.start, span.end) + ' · ' + plural(span.n, 'day') : 'No days yet'),
+        h('div', { class: 'span' + (span ? '' : ' none') }, span ? (span.start ? range(span.start, span.end) : 'Days ' + (span.first + 1) + '–' + (span.last + 1)) + ' · ' + plural(span.n, 'day') : 'No days yet'),
         del,
         h('div', null),
         h('div', { class: 'photo' }, url, credit)));
@@ -640,15 +651,16 @@
       const warn = h('div', { class: 'notice warn hidden' });
       const save = h('button', { class: 'btn primary', type: 'submit' }, 'Save dates');
       let confirmed = null;   // ids of days with content the user agreed to delete
-      box.append(h('h2', null, 'Change dates'), h('p', { class: 'lead' }, 'Days are added or removed to match. Plans on the days you keep stay as they are.'),
+      box.append(h('h2', null, t.start_date ? 'Change dates' : 'Set dates'),
+        h('p', { class: 'lead' }, 'A new start date moves the whole trip; plans stay on their day of the trip. A shorter trip removes days from the end.'),
         h('form', { onsubmit: async e => {
           e.preventDefault();
           if (!dates.check()) return;
-          const s = dates.s.value, en = dates.e.value;
-          const outside = tripData.days.filter(d => (d.date < s || d.date > en) && (d.location || d.plan || d.notes));
+          const s = dates.s.value, len = diffDays(s, dates.e.value) + 1;
+          const outside = tripData.days.filter(d => d.idx >= len && (d.location || d.plan || d.notes));
           if (outside.length && (!confirmed || confirmed.join() !== outside.map(d => d.id).join())) {
-            warn.textContent = plural(outside.length, 'day') + ' outside the new dates ' + (outside.length === 1 ? 'has' : 'have') + ' plans: ' +
-              outside.slice(0, 6).map(d => md(d.date)).join(', ') + (outside.length > 6 ? '…' : '') + '. Saving deletes ' + (outside.length === 1 ? 'it' : 'them') + '.';
+            warn.textContent = plural(outside.length, 'day') + ' at the end of the trip ' + (outside.length === 1 ? 'has' : 'have') + ' plans: ' +
+              outside.slice(0, 6).map(dayName).join(', ') + (outside.length > 6 ? '…' : '') + '. Saving deletes ' + (outside.length === 1 ? 'it' : 'them') + '.';
             warn.classList.remove('hidden');
             save.textContent = 'Delete ' + plural(outside.length, 'day') + ' and save';
             save.classList.replace('primary', 'danger');
@@ -660,8 +672,8 @@
             const { error } = await sb.from('days').delete().in('id', confirmed);
             if (error) { save.disabled = false; return toast(errText(error), true); }
           }
-          const { error } = await sb.from('trips').update({ start_date: s, end_date: en }).eq('id', t.id);
-          if (error) { save.disabled = false; return toast(/DAYS_WITH_CONTENT/.test(error.message) ? 'Some days outside the new dates still have plans. Reload and try again.' : errText(error), true); }
+          const { error } = await sb.from('trips').update({ start_date: s, length_days: len }).eq('id', t.id);
+          if (error) { save.disabled = false; return toast(/DAYS_WITH_CONTENT/.test(error.message) ? 'Some days at the end still have plans. Reload and try again.' : errText(error), true); }
           close(); tripData = null; tripView(t.id, currentTab()); toast('Dates changed');
         } }, dates.nodes, warn,
           h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'), save)));
