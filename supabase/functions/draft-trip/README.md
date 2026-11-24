@@ -2,9 +2,9 @@
 
 Makes the three route options for step 3 of the new trip pop-up.
 - The browser sends step 1 (destination, length, start date if set) and the "finish the sentence" answers: who, what you love, pace, and any of when, start point, end point, must do and rather avoid.
-- This function asks Claude for three routes and sends them back. Each route has a name, tag, pitch, "best for", 2–4 highlights (the last one is its trade-off) and phases with stops.
+- This function asks Claude in two steps: first an outline of three routes (phases and how many days each gets), then, for all three routes at once, the stops inside each phase. Splitting it keeps long trips adding up. It sends the three routes back. Each route has a name, tag, pitch, "best for", 2–4 highlights (the last one is its trade-off) and phases with stops.
 - Nothing is saved until you press "Customize this plan" in the app.
-- One set of three counts as one of the 20 drafts per day.
+- One set of three counts as one of the 20 drafts per day (it's four calls to Claude: one outline, three stop lists).
 
 - **`prompt.ts`**: the whole prompt. It holds the model, the rules and voice for every draft (from `suitcase/VOICE.md`), the message built from your answers, and the shape of the answer. Edit it to change how drafts come out.
 - **`index.ts`**: sign-in check, a daily limit (20 drafts per person), and the call to the Anthropic API.

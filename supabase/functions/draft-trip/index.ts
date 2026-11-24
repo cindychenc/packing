@@ -2,7 +2,7 @@
 // Runs on Supabase (Deno). Needs the secret ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
 // The key never reaches the browser. Only signed-in people can call this, up to DAILY_LIMIT drafts a day.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MODEL, SYSTEM, TOOL, KINDS, MODES, userMessage, type Ask } from './prompt.ts';
+import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, type Ask } from './prompt.ts';
 
 const DAILY_LIMIT = 20;
 const ALLOWED = ['https://packing.boringcase.com', 'http://localhost:8000'];
@@ -51,37 +51,60 @@ Deno.serve(async (req) => {
 
   const key = Deno.env.get('ANTHROPIC_API_KEY');
   if (!key) return reply(500, { error: 'The AI key isn\'t set up yet.' });
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: Math.min(32000, 8000 + ask.days * 200),   // long trips have many stops
-      system: SYSTEM,
-      tools: [TOOL],
-      tool_choice: { type: 'tool', name: TOOL.name },
-      messages: [{ role: 'user', content: userMessage(ask) }],
-    }),
-  });
-  if (!res.ok) {
-    console.error('anthropic', res.status, await res.text());
-    return reply(502, { error: 'The AI couldn\'t make a draft just now. Try again in a minute.' });
+
+  // One forced tool call; returns the tool's input, or null.
+  async function ask_(system: string, tool: any, message: string, maxTokens: number): Promise<any> {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key!, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, tools: [tool], tool_choice: { type: 'tool', name: tool.name },
+        messages: [{ role: 'user', content: message }] }),
+    });
+    if (!res.ok) { console.error('anthropic', tool.name, res.status, await res.text()); return null; }
+    const out = await res.json();
+    if (out.stop_reason === 'max_tokens') console.warn(tool.name, 'cut off at max_tokens');
+    return (out.content ?? []).find((c: any) => c.type === 'tool_use')?.input ?? null;
   }
-  const out = await res.json();
-  const draft = (out.content ?? []).find((c: any) => c.type === 'tool_use')?.input;
-  const routes = Array.isArray(draft?.routes) ? draft.routes.filter((r: any) => Array.isArray(r?.phases) && r.phases.length) : [];
-  if (!routes.length) return reply(502, { error: 'The AI answer didn\'t make sense. Try again.' });
-  // Unknown highlight types and travel modes fall back to ones the app can draw.
-  const fixHl = (h: any) => ({ ...h, kind: KINDS.includes(h?.kind) ? h.kind : 'other' });
+  const fail = () => reply(502, { error: 'The AI couldn\'t make a draft just now. Try again in a minute.' });
+
+  // Step 1: three outlines (phases with days).
+  const outline = await ask_(OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage(ask), 6000);
+  const routes = Array.isArray(outline?.routes) ? outline.routes.filter((r: any) => Array.isArray(r?.phases) && r.phases.length) : [];
+  if (!routes.length) return fail();
+  // Phase days must add up to the trip: fix it here, where it's a handful of numbers.
   routes.forEach((r: any) => {
-    r.highlights = (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl);
-    r.phases.forEach((p: any) => (p.stops ?? []).forEach((st: any) => { if (st.next && !MODES.includes(st.next)) st.next = 'bus'; }));
+    r.phases.forEach((p: any) => { p.days = Math.max(1, Math.round(+p.days || 1)); });
+    let sum = r.phases.reduce((a: number, p: any) => a + p.days, 0);
+    if (sum !== ask.days) {
+      console.warn('outline days', r.name, sum, 'of', ask.days);
+      const k = ask.days / sum;
+      r.phases.forEach((p: any) => { p.days = Math.max(1, Math.round(p.days * k)); });
+      sum = r.phases.reduce((a: number, p: any) => a + p.days, 0);
+      const big = r.phases.reduce((a: any, p: any) => (p.days > a.days ? p : a), r.phases[0]);
+      big.days = Math.max(1, big.days + ask.days - sum);
+    }
   });
-  routes.forEach((r: any) => {   // logged so mismatches show up in the function logs; the app fits them
-    const n = r.phases.reduce((a: number, p: any) => a + (p.stops ?? []).reduce((b: number, st: any) => b + (+st.nights || 0), 0), 0);
-    if (n !== ask.days) console.warn('nights', r.name, n, 'of', ask.days);
+
+  // Step 2: the stops for each route, all three at once.
+  const filled = await Promise.all(routes.map((r: any) => ask_(STOPS_SYSTEM, STOPS_TOOL, stopsMessage(ask, r), Math.min(16000, 3000 + ask.days * 120))));
+  const ready: any[] = [];
+  routes.forEach((r: any, i: number) => {
+    const got = Array.isArray(filled[i]?.phases) ? filled[i].phases : [];
+    const phases = r.phases.map((p: any, j: number) => {
+      const m = got.find((g: any) => g?.name === p.name) ?? got[j];
+      const stops = (Array.isArray(m?.stops) ? m.stops : []).filter((s: any) => s && String(s.place ?? '').trim());
+      const n = stops.reduce((a: number, s: any) => a + (Math.round(+s.nights) || 1), 0);
+      if (n !== p.days) console.warn('stop nights', r.name, p.name, n, 'of', p.days);
+      return { name: p.name, stops };
+    }).filter((p: any) => p.stops.length);
+    if (!phases.length) return;
+    phases.forEach((p: any) => p.stops.forEach((st: any) => { if (st.next && !MODES.includes(st.next)) st.next = 'bus'; }));
+    ready.push({ ...r, phases, highlights: (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl) });
   });
-  if (out.stop_reason === 'max_tokens') console.warn('answer cut off at max_tokens', ask.days, 'days');
-  const shared = (Array.isArray(draft.shared) ? draft.shared : []).map(fixHl);
-  return reply(200, { draft: { description: String(draft.description ?? ''), shared, routes }, model: MODEL });
+  if (!ready.length) return fail();
+  const shared = (Array.isArray(outline.shared) ? outline.shared : []).map(fixHl);
+  return reply(200, { draft: { description: String(outline.description ?? ''), shared, routes: ready }, model: MODEL });
 });
+
+// Unknown highlight types fall back to one the app can draw.
+function fixHl(h: any) { return { ...h, kind: KINDS.includes(h?.kind) ? h.kind : 'other' }; }
