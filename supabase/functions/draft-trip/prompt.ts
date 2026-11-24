@@ -24,6 +24,9 @@ const VOICE = `The voice (calm guidebook, a little of a knowledgeable friend):
 8. Write to the traveller ("you"), never "travellers" or "visitors".
 Never use: breathtaking, stunning, hidden gem, must-see, nestled, vibrant, unforgettable, paradise, bucket list, off the charts, once-in-a-lifetime, "a feast for the senses".`;
 
+// Trips at least this long get rest stops and buffer days built in (see STOPS_SYSTEM, "Long trips").
+export const LONG_TRIP_DAYS = 45;
+
 export type Ask = {
   destination: string; days: number; start: string | null; who: string | null; loves: string[]; pace: string | null;
   when: string | null; from: string | null; to: string | null; must: string[]; avoid: string | null;
@@ -85,6 +88,9 @@ Season:
   Swap in the nearest thing that does work then, and make that route's trade-off say so plainly
   ("Skips multi-day hikes: trails are snowbound until June").
 - If no date or season is given, end the description with the best months to go, in a few words.
+
+Long trips (${LONG_TRIP_DAYS}+ days): moving every 2–3 nights for months is tiring. Plan a longer rest stop (4–6 nights in a
+bigger city or easy base) about every 2–3 weeks, and give the phases that hold them enough days.
 
 Highlights:
 - Give each route 3–4 highlights: what makes this route different from the other two. Name the town each one happens in ("place").
@@ -178,6 +184,13 @@ Rules:
   No hotels, trails or neighbourhoods as stops. A lake or valley camp is fine for a hike or yurt stay.
 - Give each stop its country and rough coordinates, so it lands in the right place on the map.
 - Include the towns named in the route's highlights as stops, in the phase they belong to.
+
+Long trips (only when the message says "long trip"):
+- About every 2–3 weeks of moving, make one stop a rest stop: 4–6 nights in a bigger city or an easy, comfortable base,
+  longer than the usual nights per stop. Set rest to true on it. Its lines are mostly easy: "Rest day: laundry and admin",
+  "Slow morning, café and a walk", plus one or two things to see. Good places have reliable transport, food and supplies.
+- After a long travel day (8+ hours on the road, an overnight bus or train, a border crossing), keep the next day at that stop easy.
+- Count rest stops in the phase's nights like any other stop; with them, a phase needs fewer stops.
 - Order stops along a realistic route. Long transfers eat into a stop.
 - A phase marked "long stays" is meant as a few long stays in one area: the nights per stop don't apply there.
 - If a date or season is given, keep every day's line right for the weather then (seasons are where the destination is:
@@ -196,10 +209,12 @@ Use the make_stops tool to answer. Don't write anything else.`;
 
 export function stopsMessage(r: Ask, route: any): string {
   const [lo, hi] = nightsFor(r.pace);
+  const long = r.days >= LONG_TRIP_DAYS;
   const phases = (route.phases ?? []).map((p: any, i: number) =>
     `${i + 1}. ${p.name}: ${p.days} days, ${p.long_stays ? 'long stays (a few stops, the nights per stop don\'t apply)' : 'so ' + stopsFor(p.days, r.pace)}. ${p.plan ?? ''}`.trim());
   const hl = (route.highlights ?? []).filter((h: any) => h.place && !h.skip).map((h: any) => `${h.text} (${h.place})`);
-  return [...about(r), `Nights per stop: ${lo}–${hi}`, '',
+  return [...about(r), `Nights per stop: ${lo}–${hi}`,
+    ...(long ? [`This is a long trip (${r.days} days): build in rest stops about every 2–3 weeks, and easy days after long travel days.`] : []), '',
     `Route: ${route.name}. ${route.pitch ?? ''}`,
     'Phases, in order:', ...phases,
     ...(hl.length ? [`Highlights to include as stops: ${hl.join('; ')}`] : []),
@@ -241,6 +256,7 @@ export const STOPS_TOOL = {
                   nights: { type: 'integer', minimum: 1 },
                   why: { type: 'string', description: 'One sentence, at most 20 words.' },
                   next: { type: 'string', enum: MODES, description: 'How to get to the next stop. Leave out on the last stop of the route.' },
+                  rest: { type: 'boolean', description: 'True for a rest stop on a long trip (a longer, easy stay in a bigger city or comfortable base).' },
                   plans: { type: 'array', items: { type: 'string' },
                     description: 'One short line per night at this stop, in order: what to do that day, under 8 words. The app adds the journey in, so the first line is about the place.' },
                 },

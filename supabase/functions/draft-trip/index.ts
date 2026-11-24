@@ -96,6 +96,7 @@ Deno.serve(async (req) => {
         st.nights = Math.max(1, Math.round(+st.nights) || 1);
         if (st.next && !MODES.includes(st.next)) st.next = 'bus';
         st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
+        st.rest = st.rest === true;
         if (!(Math.abs(+st.lat) <= 90 && Math.abs(+st.lng) <= 180)) { delete st.lat; delete st.lng; }
       });
       return { name: p.name, stops };
@@ -134,7 +135,9 @@ Deno.serve(async (req) => {
     for (let cap = hi + 2; have < want; cap = Infinity) {
       let grew = false;
       while (have < want) {
-        const room = stops.filter((s: any) => s.nights < cap); if (!room.length) break;
+        // Rest stops and bigger stays take spare nights first; on long trips they're where a buffer belongs.
+        const rest = stops.filter((s: any) => s.rest && s.nights < cap + 1);
+        const room = rest.length ? rest : stops.filter((s: any) => s.nights < cap); if (!room.length) break;
         const low = Math.min(...room.map((s: any) => s.nights));
         for (const s of room) { if (have >= want) break; if (s.nights === low) { s.nights++; have++; grew = true; s.plans.push('Spare day: rest or a day trip from ' + s.place); } }
       }
