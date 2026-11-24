@@ -64,7 +64,45 @@
     } catch (e) { return []; }
   }
 
-  const api = { suggest, phaseNameFor, continentOf, fromFeature };
+
+  // The best match for a name, or null (used to place the stops of a drafted trip).
+  async function lookup(name, country) {
+    const q = [name, country].filter(Boolean).join(', ');
+    const fake = root.SUITCASE_PLACES_FAKE;
+    if (fake) { const k = (name || '').toLowerCase(); return fake.find(p => p.name.toLowerCase() === k) || null; }
+    const token = (root.SUITCASE_CONFIG || {}).mapboxToken;
+    if (!token || !q.trim()) return null;
+    try {
+      const res = await fetch('https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(q) +
+        '&limit=1&types=place,locality,region,country&language=en&access_token=' + encodeURIComponent(token));
+      if (!res.ok) return null;
+      const f = ((await res.json()).features || [])[0];
+      return f ? fromFeature(f) : null;
+    } catch (e) { return null; }
+  }
+
+  // Google's encoded polyline (precision 5), as Mapbox Static Images wants for path overlays.
+  function polyline(points) {
+    let out = '', pLat = 0, pLng = 0;
+    const enc = v => { v = v < 0 ? ~(v << 1) : v << 1; let s = ''; while (v >= 0x20) { s += String.fromCharCode((0x20 | (v & 0x1f)) + 63); v >>= 5; } return s + String.fromCharCode(v + 63); };
+    points.forEach(([lat, lng]) => { const a = Math.round(lat * 1e5), b = Math.round(lng * 1e5); out += enc(a - pLat) + enc(b - pLng); pLat = a; pLng = b; });
+    return out;
+  }
+  // A static map image of the stops joined in order: [{ lat, lng, colour }].
+  function staticMap(stops, w, hgt) {
+    const token = (root.SUITCASE_CONFIG || {}).mapboxToken;
+    const pts = stops.filter(p => p.lat != null && p.lng != null);
+    if (!token || !pts.length) return null;
+    const hex = c => (c || '#3F5675').replace('#', '').toLowerCase();
+    const r6 = v => Math.round(v * 1e4) / 1e4;
+    const over = [];
+    if (pts.length > 1) over.push('path-3+3f5675-0.75(' + encodeURIComponent(polyline(pts.map(p => [p.lat, p.lng]))) + ')');
+    pts.forEach(p => over.push('pin-s+' + hex(p.colour) + '(' + r6(p.lng) + ',' + r6(p.lat) + ')'));
+    return 'https://api.mapbox.com/styles/v1/mapbox/light-v11/static/' + over.join(',') + '/auto/' + (w || 600) + 'x' + (hgt || 320) +
+      '@2x?padding=40&access_token=' + encodeURIComponent(token);
+  }
+
+  const api = { suggest, lookup, staticMap, polyline, phaseNameFor, continentOf, fromFeature };
   root.SuitcasePlaces = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

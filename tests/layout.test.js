@@ -194,4 +194,19 @@ t('stops round-trip through toRows/fromRows', () => {
   assert.deepStrictEqual(L.stopsOf(back.phases[0]).map(s => [s.place, s.n]), [['Lima', 2], ['Cusco', 2]]);
 });
 
+// ───────── drafts ─────────
+t('a draft fills the trip in order and leaves the rest to plan', () => {
+  const r = L.fromDraft([{ name: 'Chile', stops: [{ place: 'Santiago', nights: 2 }, { place: 'Pucón', nights: 3 }] }, { name: 'Peru', stops: [{ place: 'Cusco', nights: 4 }] }], 12);
+  assert.deepStrictEqual(lens(r.layout), [5, 4]); assert.strictEqual(r.layout.free.length, 3);
+  assert.deepStrictEqual(locs(r.layout.phases[1]), ['Cusco', 'Cusco', 'Cusco', 'Cusco']);
+  assert.notStrictEqual(r.layout.phases[0].colour, r.layout.phases[1].colour); assert.strictEqual(r.shortened, false);
+});
+t('a draft longer than the trip is cut at the end', () => {
+  const r = L.fromDraft([{ name: 'A', stops: [{ place: 'X', nights: 4 }, { place: 'Y', nights: 4 }, { place: 'Z', nights: 2 }] }], 6);
+  assert.deepStrictEqual(locs(r.layout.phases[0]), ['X', 'X', 'X', 'X', 'Y', 'Y']); assert.strictEqual(r.shortened, true); assert.strictEqual(r.layout.free.length, 0);
+});
+t('empty stops and phases are skipped', () => {
+  const r = L.fromDraft([{ name: 'Empty', stops: [] }, { name: '', stops: [{ place: ' ', nights: 2 }, { place: 'Lima', nights: 0 }] }], 3);
+  assert.deepStrictEqual(lens(r.layout), [1]); assert.strictEqual(r.layout.phases[0].name, null);
+});
 console.log(passed + ' layout tests passed' + (process.exitCode ? ' (some failed)' : ''));

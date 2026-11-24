@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SHOTS = pathlib.Path('/tmp/shots'); SHOTS.mkdir(exist_ok=True)
 FAKE = (ROOT / 'tests' / 'fake-supabase.js').read_text()
+PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082')
 
 server = subprocess.Popen([sys.executable, '-m', 'http.server', '8000', '--bind', '127.0.0.1'], cwd=ROOT,
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -19,14 +20,19 @@ try:
         b = p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
         page = b.new_page(viewport={'width': 1360, 'height': 900})
         page.route('**/lib/supabase-*.js', lambda r: r.fulfill(body=FAKE, content_type='application/javascript'))
-        page.route('https://api.mapbox.com/**', lambda r: (errors.append('called Mapbox: ' + r.request.url), r.abort()))
+        page.route('https://api.mapbox.com/**', lambda r: r.fulfill(status=200, content_type='image/png', body=PNG) if '/static/' in r.request.url
+                   else (errors.append('called Mapbox: ' + r.request.url), r.abort()))
         page.add_init_script("""window.SUITCASE_PLACES_FAKE = [
           { name: 'Lisbon', label: 'Portugal', kind: 'place', country: 'Portugal', cc: 'PT', lat: 38.72, lng: -9.14 },
           { name: 'Lima', label: 'Peru', kind: 'place', country: 'Peru', cc: 'PE', lat: -12.05, lng: -77.04 },
           { name: 'Cusco', label: 'Cusco, Peru', kind: 'place', country: 'Peru', cc: 'PE', lat: -13.53, lng: -71.97 },
           { name: 'Peru', label: '', kind: 'country', country: 'Peru', cc: 'PE', lat: -9.2, lng: -75 },
           { name: 'Tokyo', label: 'Japan', kind: 'place', country: 'Japan', cc: 'JP', lat: 35.68, lng: 139.69 },
-          { name: 'Japan', label: '', kind: 'country', country: 'Japan', cc: 'JP', lat: 36, lng: 138 } ];""")
+          { name: 'Japan', label: '', kind: 'country', country: 'Japan', cc: 'JP', lat: 36, lng: 138 },
+          { name: 'Santiago', label: 'Chile', kind: 'place', country: 'Chile', cc: 'CL', lat: -33.45, lng: -70.67 },
+          { name: 'Pucón', label: 'Chile', kind: 'place', country: 'Chile', cc: 'CL', lat: -39.28, lng: -71.95 },
+          { name: 'Puerto Natales', label: 'Chile', kind: 'place', country: 'Chile', cc: 'CL', lat: -51.73, lng: -72.5 },
+          { name: 'El Chaltén', label: 'Argentina', kind: 'place', country: 'Argentina', cc: 'AR', lat: -49.33, lng: -72.89 } ];""")
         page.on('console', lambda m: m.type == 'error' and errors.append('console: ' + m.text))
         page.on('pageerror', lambda e: errors.append('pageerror: ' + str(e)))
         U = 'http://127.0.0.1:8000/'
@@ -52,27 +58,31 @@ try:
         ok(page.is_visible('text=Your first trip starts here'), 'empty state')
         page.screenshot(path=str(SHOTS / '03-empty.png'))
 
-        # 3. new trip pop-up: "Not yet" first, then "Yes, I do"
+        # 3. new trip pop-up: where + dates, Next, then how to start
         page.click('.empty .btn.primary')
         page.wait_for_selector('.modal.newtrip')
-        ok(page.get_attribute('.seg-btn:has-text("Not yet")', 'aria-pressed') == 'true', 'defaults to Not yet')
-        ok(page.get_attribute('.len-pill:has-text("1 week")', 'aria-pressed') == 'true', 'defaults to 1 week')
+        nxt = '.modal button:has-text("Next →")'
+        ok(page.is_disabled(nxt) and not page.query_selector('.seg-btn[aria-pressed=true]'), 'nothing picked; Next waits for answers')
+        page.fill('.modal .dest-in', 'Portugal')
+        page.click('.seg-btn:has-text("Not yet")')
+        ok(page.is_disabled(nxt), 'Next waits for a length')
         page.click('.len-pill:has-text("Months")')
         page.click('.len-pill.months button[aria-label=More]'); page.click('.len-pill.months button[aria-label=More]')
-        ok('3 months' in page.inner_text('.len-pill.months'), 'months counter inside the pill')
-        page.click('.modal button[type=submit]')
-        ok(page.is_visible('text=Give your trip a name'), 'name required')
-        ok(page.is_visible('text=Already have a plan? Import it') and page.is_visible('.import-row .soon-tag'), 'import shown as Soon')
+        ok('3 months' in page.inner_text('.len-pill.months') and page.is_enabled(nxt), 'months counter inside the pill; Next ready')
         page.click('.seg-btn:has-text("Yes, I do")')
-        page.fill('.modal .big-name', 'Portugal in spring')
-        page.click('.modal button[type=submit]')
-        ok(page.is_visible('text=Pick a start date'), 'exact needs a start date')
+        ok(page.is_disabled(nxt), 'exact needs a start date')
         page.fill('.modal input[type=date]', '2027-04-05')
         for _ in range(7): page.click('.exact-row button[aria-label=Less]')
         ok('14 days' in page.inner_text('.exact-row'), 'length stepper')
         ok('Back on Sun, Apr 18, 2027' in page.inner_text('.back-on'), f"back-on line ({page.inner_text('.back-on')!r})")
         page.screenshot(path=str(SHOTS / '04-new-trip.png'))
-        page.click('.modal button[type=submit]')
+        page.click(nxt); page.wait_for_selector('.step2')
+        ok(len(page.query_selector_all('.how-row')) == 3 and page.is_disabled('.how-row:has-text("I know my plan")')
+           and page.is_visible('.how-row:has-text("I have a vague idea") .soon-tag'), 'how to start: Inspire me, the other two Soon')
+        page.click('.how-row:has-text("Inspire me")')
+        ok(page.is_visible('.how-row.dd') and page.is_disabled('.modal button:has-text("Build my draft")'), 'picked option collapses; Build waits for a love')
+        page.screenshot(path=str(SHOTS / '04b-how.png'))
+        page.click('.modal .empty-start')
         page.wait_for_selector('.planner .pcard.start'); page.mouse.move(5, 5)
         tt = page.inner_text('.pcard.start'); ok("Let's get started." in tt and '14 days to plan' in tt, f'new trip opens on the Planner, empty ({tt[:60]!r})')
         ok(page.is_visible('.fnav .fn.on:has-text("Planner")') and page.is_visible('.fnav .fn.off:has-text("Bookings")'), 'bottom nav: Planner on, Bookings soon')
@@ -86,7 +96,9 @@ try:
         for _ in range(3): page.click('.pcard.start button[aria-label="One night more"]')
         page.click('.pcard.start .btn.primary:has-text("Add")'); page.wait_for_selector('.pcard.live .f-place')
         ok(page.input_value('.pcard.live input.pc-name') == 'Portugal', 'first stop names the phase after the country')
-        page.fill('.pcard.live input.pc-name', 'Lisbon & Sintra'); page.keyboard.press('Enter'); page.wait_for_timeout(300)
+        page.wait_for_function("document.activeElement.classList.contains('stop-in')")
+        page.fill('.pcard.live input.pc-name', 'Lisbon & Sintra'); page.keyboard.press('Enter')
+        page.wait_for_function("document.querySelector('.tl-ph b') && document.querySelector('.tl-ph b').textContent === 'Lisbon & Sintra'")
 
         # 4. Itinerary grouped by phase: type a location, autosave
         page.click('.fnav a:has-text("Itinerary")'); page.wait_for_selector('table.itin.grouped')
@@ -175,18 +187,20 @@ try:
 
         # 9. My trips card
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
-        ok('Portugal in spring' in page.inner_text('.trip-card'), 'trip card shown')
+        ok('Portugal' in page.inner_text('.trip-card'), 'trip card shown')
         page.screenshot(path=str(SHOTS / '08-trips.png'))
 
         # 9b. a trip without dates, from the pop-up ("Not yet" · 2 weeks)
         page.click('.page-head .btn.primary'); page.wait_for_selector('.modal.newtrip')
-        page.fill('.modal .big-name', 'Someday Japan'); page.click('.len-pill:has-text("2 weeks")')
-        page.click('.modal button[type=submit]'); page.wait_for_selector('.planner')
+        page.click('.modal .dest-in'); page.keyboard.type('Toky'); page.wait_for_selector('.ac-i:has-text("Tokyo")'); page.keyboard.press('Enter')
+        page.click('.seg-btn:has-text("Not yet")'); page.click('.len-pill:has-text("2 weeks")')
+        page.click('.modal button:has-text("Next →")'); page.click('.modal .empty-start'); page.wait_for_selector('.planner')
+        ok(page.input_value('#firststop') == 'Tokyo' and page.inner_text('.start-t') == 'Japan', 'a single city becomes the first stop, ready to add')
         ok('14 days · no dates yet' in page.inner_text('.trip-head .meta'), 'rough trip created without dates')
         page.click('a.crumb'); page.wait_for_selector('.trip-card >> nth=1')
-        card = page.inner_text('.trip-card:has-text("Someday Japan")')
+        card = page.inner_text('.trip-card:has-text("Tokyo")')
         ok('no dates yet' in card.lower() and '14 days · dates open' in card, f'undated trip card ({card!r})')
-        page.click('.trip-card:has-text("Someday Japan")'); page.wait_for_selector('.planner')
+        page.click('.trip-card:has-text("Tokyo")'); page.wait_for_selector('.planner')
         page.click('#firststop')
         ok(page.is_visible('.f-row.gh .f-day:has-text("DAY")') and len(page.query_selector_all('.f-row.gh')) == 2, 'undated trip: days are DAY 1, DAY 2…')
         page.click('.fnav a:has-text("Itinerary")'); page.wait_for_selector('.itin-empty')
@@ -195,7 +209,7 @@ try:
 
         # 9c. apply_layout in the fake backend (same rules as the database)
         res = page.evaluate("""async () => {
-            const db = JSON.parse(localStorage.getItem('fake:db')); const t = db.trips.find(x => x.name === 'Someday Japan');
+            const db = JSON.parse(localStorage.getItem('fake:db')); const t = db.trips.find(x => x.name === 'Tokyo');
             const rows = db.days.filter(d => d.trip_id === t.id).map(d => ({ id: d.id, idx: d.idx, phase_id: null }));
             const L = SuitcaseLayout; let lay = L.fromRows([], rows); lay = L.insertPhaseAt(lay, 0, 4).layout; lay = L.insertPhaseAt(lay, 1, 3).layout;
             const r = L.toRows(lay); const c = supabase.createClient();
@@ -209,8 +223,8 @@ try:
 
         # 9d. the Planner: phase timeline + phase cards
         page.click('.page-head .btn.primary'); page.wait_for_selector('.modal.newtrip')
-        page.fill('.modal .big-name', 'Planner test'); page.click('.len-pill:has-text("3 weeks")')
-        page.click('.modal button[type=submit]'); page.wait_for_selector('.pcard.start')
+        page.fill('.modal .dest-in', 'Planner test'); page.click('.seg-btn:has-text("Not yet")'); page.click('.len-pill:has-text("3 weeks")')
+        page.click('.modal button:has-text("Next →")'); page.click('.modal .empty-start'); page.wait_for_selector('.pcard.start')
         rows = lambda: len(page.query_selector_all('.pcard.live .f-row:not(.gh)'))
         ok(not page.is_visible('.f-ghosts .f-row'), 'no free-day rows until the input is used')
         page.click('#firststop')
@@ -286,6 +300,38 @@ try:
         page.set_viewport_size({'width': 420, 'height': 860}); page.wait_for_timeout(200)
         page.screenshot(path=str(SHOTS / '12-planner-phone.png'), full_page=True)
         page.set_viewport_size({'width': 1360, 'height': 900})
+        page.click('a.crumb'); page.wait_for_selector('.trip-card')
+
+        # 9e. Inspire me: draft-trip (faked) → At a glance → save
+        page.click('.page-head .btn.primary'); page.wait_for_selector('.modal.newtrip')
+        page.fill('.modal .dest-in', 'Patagonia'); page.click('.seg-btn:has-text("Not yet")'); page.click('.len-pill:has-text("3 weeks")')
+        page.click('.modal button:has-text("Next →")'); page.click('.how-row:has-text("Inspire me")')
+        page.click('.len-pill:has-text("Hiking")'); page.click('.len-pill:has-text("Slow")')
+        page.evaluate("localStorage.setItem('fake:draft', 'fail')")
+        page.click('.modal button:has-text("Build my draft")'); page.wait_for_selector('.modal .notice.warn:not(.hidden)')
+        ok("couldn't make a draft just now" in page.inner_text('.modal .notice.warn') and page.is_visible('.modal button:has-text("Build my draft")'), 'a failed draft says so and keeps the answers')
+        page.evaluate("localStorage.removeItem('fake:draft')")
+        page.click('.modal button:has-text("Build my draft")')
+        ok(page.is_visible('text=Building your draft'), 'shows it is working')
+        page.wait_for_selector('.glance')
+        sent = page.evaluate('window.__lastInvoke')
+        ok(sent['name'] == 'draft-trip' and sent['body'] == {'destination': 'Patagonia', 'days': 21, 'start': None, 'loves': ['Hiking'], 'pace': 'Slow'}, f'sends the answers ({sent})')
+        g = page.inner_text('.glance')
+        ok('Coast to mountains through Patagonia.' in g and 'Base for the W Trek.' in g and 'Central Chile' in g, 'At a glance: description, phases, why each stop')
+        ok('last stops were shortened' in g and 'El Chaltén · 8 nights' in g, 'a draft longer than the trip is cut to fit')
+        ok(page.get_attribute('.g-map', 'src').startswith('https://api.mapbox.com/styles/v1/mapbox/light-v11/static/path-3'), 'map joins the pins')
+        page.screenshot(path=str(SHOTS / '13-glance.png'))
+        page.click('.modal button:has-text("Try a different start")')
+        ok(page.is_visible('.how-row.dd') and page.is_visible('.len-pill.on:has-text("Hiking")'), 'try again keeps the answers')
+        page.click('.modal button:has-text("Build my draft")'); page.wait_for_selector('.glance')
+        page.click('.modal button:has-text("Looks good")'); page.wait_for_selector('.pcard.live')
+        ok([e.inner_text().split('\n')[0] for e in page.query_selector_all('.tl-ph')] == ['Central Chile', 'Patagonia'], 'the draft is the trip')
+        ok(page.input_value('.pcard.live input.pc-name') == 'Central Chile' and page.is_visible('.pcard.live .f-leg:has-text("Santiago → Pucón")'), 'first phase open with its stops')
+        page.wait_for_timeout(300)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        t = [x for x in db['trips'] if x['name'] == 'Patagonia'][0]
+        ok(t['destination'] == 'Patagonia' and t['subtitle'] == 'Coast to mountains through Patagonia.' and t['length_days'] == 21, 'trip keeps destination and description')
+        ok(sorted(p['name'] for p in db['places'] if p['trip_id'] == t['id']) == ['El Chaltén', 'Pucón', 'Puerto Natales', 'Santiago'], 'stops found on the map are kept')
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
 
         # 10. delete

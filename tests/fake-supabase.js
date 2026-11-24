@@ -129,6 +129,20 @@
       return {
         from: builder,
         rpc: async (fn, args) => (window.__fakeFail ? { data: null, error: { message: window.__fakeFail } } : fn === 'apply_layout' ? applyLayout(args) : { data: null, error: { message: 'unknown function ' + fn } }),
+        // draft-trip Edge Function: a fixed draft (or an error when localStorage 'fake:draft' is 'fail').
+        functions: {
+          async invoke(name, opts) {
+            const b = (opts && opts.body) || {};
+            window.__lastInvoke = { name, body: b };
+            await new Promise(r => setTimeout(r, 150));
+            if (localStorage.getItem('fake:draft') === 'fail') return { data: null, error: { message: 'Edge Function returned a non-2xx status code', context: { json: async () => ({ error: 'The AI couldn\'t make a draft just now. Try again in a minute.' }) } } };
+            return { data: { model: 'fake', draft: {
+              description: 'Coast to mountains through ' + b.destination + '.',
+              phases: [
+                { name: 'Central Chile', stops: [{ place: 'Santiago', country: 'Chile', nights: 3, why: 'Fly in and get your bearings.' }, { place: 'Pucón', country: 'Chile', nights: 4, why: 'Volcano and lake hikes.' }] },
+                { name: 'Patagonia', stops: [{ place: 'Puerto Natales', country: 'Chile', nights: 6, why: 'Base for the W Trek.' }, { place: 'El Chaltén', country: 'Argentina', nights: 9, why: 'Day hikes to Fitz Roy.' }] }] } }, error: null };
+          }
+        },
         auth: {
           getSession: async () => ({ data: { session: sess() } }),
           onAuthStateChange(fn) { listeners.push(fn); return { data: { subscription: { unsubscribe() {} } } }; },

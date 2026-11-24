@@ -240,6 +240,29 @@
     return { layout: c, msg };
   }
 
+
+  /* A drafted trip (from "Inspire me") → a layout of total days.
+     draft: [{ name, stops: [{ place, nights }] }]. Stops are kept in order until the days run out:
+     the last stop that doesn't fit is shortened, later ones are dropped. Days left over stay to plan. */
+  function fromDraft(draftPhases, total) {
+    const L = { phases: [], free: [] }; let used = 0, cut = 0;
+    (draftPhases || []).forEach(ph => {
+      const days = [];
+      (ph.stops || []).forEach(st => {
+        const place = String(st.place || '').trim(); let n = Math.max(1, Math.round(+st.nights || 1));
+        if (!place) return;
+        if (used >= total) { cut++; return; }
+        if (used + n > total) { n = total - used; cut++; }
+        for (let k = 0; k < n; k++) days.push(Object.assign(blankDay(), { location: place }));
+        used += n;
+      });
+      if (days.length) L.phases.push({ id: makeId(), name: String(ph.name || '').trim() || null, colour: null, days });
+    });
+    L.phases.forEach(p => { p.colour = nextColour(L); });
+    for (let k = used; k < total; k++) L.free.push(blankDay());
+    return { layout: L, shortened: cut > 0, planned: used };
+  }
+
   /* ───────── rows ↔ layout ───────── */
 
   /* From database rows (phases with sort, days with idx/phase_id) to a layout.
@@ -278,7 +301,7 @@
   }
 
   const api = { MAX_DAYS, PALETTE, setIdMaker, blankDay, hasContent, total, suggestion, nameOf, nextColour,
-    insertPhaseAt, resizePhase, stopsOf, addStop, firstStop, setStopNights, addDayToPhase, removeDay, removePhase, movePhase, setTripLength,
+    insertPhaseAt, resizePhase, fromDraft, stopsOf, addStop, firstStop, setStopNights, addDayToPhase, removeDay, removePhase, movePhase, setTripLength,
     fromRows, toRows, startIdx, dateAt, clone };
   root.SuitcaseLayout = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

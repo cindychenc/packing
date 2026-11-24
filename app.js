@@ -240,63 +240,219 @@
 
   // New trip pop-up (wireframe frames 2–3). "Not yet" = a length only; "Yes, I do" = start date + length.
   const ROUGH = [['weekend', 'Weekend', 3], ['w1', '1 week', 7], ['w2', '2 weeks', 14], ['w3', '3 weeks', 21]];
+  /* New trip pop-up (canvas "Design · New trip prototype", frames 2–3).
+     Step 1: where you're going + dates, then Next. Step 2: how to start: Inspire me (AI draft) or an empty trip.
+     The AI draft is shown "At a glance" in the pop-up and only saved when you say it looks good. */
+  const LOVES = ['Hiking', 'Nature', 'Food', 'History', 'Cities', 'Beaches'];
+  const PACES = ['Slow', 'Mixed', 'Packed'];
+  const HOWS = [
+    ['inspire', 'Inspire me', 'Answer 2 quick questions, get a starting plan', true],
+    ['vague', 'I have a vague idea', 'Describe what you know in your own words', false],
+    ['paste', 'I know my plan', 'Paste a guide, sheet or notes', false]];
+  let pendingStop = null;   // first stop to put in "Let's get started." once the new trip opens
+
   function newTripModal() {
-    const st = { mode: 'rough', unit: 'w1', months: 1, start: '', len: 21 };
+    const st = { dest: '', picks: [], mode: null, unit: null, months: 1, start: '', len: 21, step: 1, how: null, howOpen: false,
+      loves: [], pace: 'Mixed', busy: false, draft: null, layout: null, stops: [] };
     modal((box, close) => {
       box.classList.add('newtrip');
       const err = h('div', { class: 'notice warn hidden' });
-      const name = h('input', { class: 'input big-name', placeholder: 'Name your trip', maxlength: 80, 'aria-label': 'Trip name', oninput: () => err.classList.add('hidden') });
+      const showErr = m => { err.textContent = m; err.classList.remove('hidden'); };
+      const lengthOf = () => st.mode === 'exact' ? st.len : st.unit === 'month' ? st.months * 30 : (ROUGH.find(r => r[0] === st.unit) || [0, 0, 0])[2];
+      const datesOk = () => st.mode === 'exact' ? !!st.start : !!st.unit;
+      const destOk = () => !!st.dest.trim();
+
+      /* where you're going: several places, comma-separated; suggestions complete the one being typed */
+      const dest = h('input', { class: 'input big-name dest-in', placeholder: 'Cities, countries or regions', maxlength: 200, autocomplete: 'off',
+        role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-label': 'Where are you going?' });
+      const acList = h('div', { class: 'ac hidden', role: 'listbox' });
+      let items = [], acI = 0, seq = 0, timer = null, focused = false;
+      const lastPart = () => { const parts = dest.value.split(','); return parts[parts.length - 1].trim(); };
+      function paintAc() {
+        const open = focused && items.length > 0;
+        acList.classList.toggle('hidden', !open); dest.setAttribute('aria-expanded', String(open));
+        acList.replaceChildren(...items.map((it, k) => h('button', { type: 'button', class: 'ac-i' + (k === acI ? ' on' : ''), role: 'option', 'aria-selected': String(k === acI),
+          onmousedown: e => { e.preventDefault(); choose(it); } }, h('strong', null, it.name), it.label ? h('span', { class: 'muted' }, it.label) : null)));
+      }
+      function syncPicks() { const names = st.dest.split(',').map(x => x.trim().toLowerCase()); st.picks = st.picks.filter(p => names.indexOf(p.name.toLowerCase()) >= 0); }
+      function choose(it) {
+        const parts = dest.value.split(','); parts[parts.length - 1] = (parts.length > 1 ? ' ' : '') + it.name;
+        dest.value = parts.join(','); st.dest = dest.value;
+        st.picks = st.picks.filter(p => p.name !== it.name).concat([it]); syncPicks();
+        items = []; paintAc(); draw();
+      }
+      dest.addEventListener('input', () => {
+        st.dest = dest.value; syncPicks(); err.classList.add('hidden'); draw();
+        clearTimeout(timer); const my = ++seq;
+        timer = setTimeout(async () => { const r = await PLACES.suggest(lastPart()); if (my !== seq) return; items = r; acI = 0; paintAc(); }, 250);
+      });
+      dest.addEventListener('keydown', e => {
+        const open = !acList.classList.contains('hidden');
+        if (e.key === 'ArrowDown' && open) { e.preventDefault(); acI = (acI + 1) % items.length; paintAc(); }
+        else if (e.key === 'ArrowUp' && open) { e.preventDefault(); acI = (acI - 1 + items.length) % items.length; paintAc(); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (open) choose(items[acI]); }
+        else if (e.key === 'Escape' && open) { e.stopPropagation(); items = []; paintAc(); }
+      });
+      dest.addEventListener('focus', () => { focused = true; paintAc(); });
+      dest.addEventListener('blur', () => setTimeout(() => { focused = false; paintAc(); }, 150));
+
       const body = h('div');
-      const create = h('button', { class: 'btn primary', type: 'submit' }, 'Start planning →');
-      const lengthOf = () => st.mode === 'exact' ? st.len : st.unit === 'month' ? st.months * 30 : ROUGH.find(r => r[0] === st.unit)[2];
-      const seg = (key, label) => h('button', { type: 'button', class: 'seg-btn' + (st.mode === key ? ' on' : ''), 'aria-pressed': String(st.mode === key),
-        onclick: () => { st.mode = key; draw(); if (key === 'exact' && name.value.trim()) body.querySelector('input[type=date]').focus(); } }, label);
-      const stepper = (val, label, onMinus, onPlus, minusOff, plusOff) => h('span', { class: 'stepper' },
+      const stepper = (label, onMinus, onPlus, minusOff, plusOff) => h('span', { class: 'stepper' },
         h('button', { type: 'button', 'aria-label': 'Less', disabled: minusOff, onclick: e => { e.stopPropagation(); onMinus(); } }, '–'),
         h('strong', null, label), h('button', { type: 'button', 'aria-label': 'More', disabled: plusOff, onclick: e => { e.stopPropagation(); onPlus(); } }, '+'));
-      function draw() {
-        let inner;
+      const seg = (key, label) => h('button', { type: 'button', class: 'seg-btn' + (st.mode === key ? ' on' : ''), 'aria-pressed': String(st.mode === key),
+        onclick: () => { st.mode = key; draw(); if (key === 'exact') { const d = body.querySelector('input[type=date]'); if (d) d.focus(); } } }, label);
+
+      function datesPart() {
+        let inner = null;
         if (st.mode === 'rough') {
           inner = h('div', { class: 'len-pills' },
             ROUGH.map(r => h('button', { type: 'button', class: 'len-pill' + (st.unit === r[0] ? ' on' : ''), 'aria-pressed': String(st.unit === r[0]),
               onclick: () => { st.unit = r[0]; draw(); } }, r[1])),
             st.unit === 'month'
-              ? h('span', { class: 'len-pill on months' }, stepper(st.months, plural(st.months, 'month'),
+              ? h('span', { class: 'len-pill on months' }, stepper(plural(st.months, 'month'),
                   () => { st.months = Math.max(1, st.months - 1); draw(); }, () => { st.months = Math.min(24, st.months + 1); draw(); }, st.months <= 1, st.months >= 24))
               : h('button', { type: 'button', class: 'len-pill', 'aria-pressed': 'false', onclick: () => { st.unit = 'month'; draw(); } }, 'Months'));
-        } else {
-          const date = h('input', { class: 'input', type: 'date', value: st.start, 'aria-label': 'Start date', oninput: e => { st.start = e.target.value; back.textContent = backText(); err.classList.add('hidden'); } });
+        } else if (st.mode === 'exact') {
           const back = h('div', { class: 'back-on' });
           const backText = () => st.start ? 'Back on ' + new Date(Date.UTC(...st.start.split('-').map((v, i) => i === 1 ? v - 1 : +v)) + (st.len - 1) * 864e5)
             .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
+          const date = h('input', { class: 'input', type: 'date', value: st.start, 'aria-label': 'Start date',
+            oninput: e => { const had = !!st.start; st.start = e.target.value; back.textContent = backText(); err.classList.add('hidden'); if (had !== !!st.start) draw(); } });
           back.textContent = backText();
           inner = h('div', null, h('div', { class: 'exact-row' }, h('span', null, 'Starting'), date, h('span', null, 'for'),
-            stepper(st.len, plural(st.len, 'day'), () => { st.len = Math.max(1, st.len - 1); draw(); }, () => { st.len = Math.min(MAX_DAYS, st.len + 1); draw(); }, st.len <= 1, st.len >= MAX_DAYS)), back);
+            stepper(plural(st.len, 'day'), () => { st.len = Math.max(1, st.len - 1); draw(); }, () => { st.len = Math.min(MAX_DAYS, st.len + 1); draw(); }, st.len <= 1, st.len >= MAX_DAYS)), back);
         }
-        body.replaceChildren(
-          h('div', { class: 'q' }, 'Do you know your dates yet?'),
-          h('div', { class: 'seg' }, seg('rough', 'Not yet'), seg('exact', 'Yes, I do')),
-          inner,
-          h('div', { class: 'hint' }, 'You can change all of this later.'));
+        return [h('div', { class: 'q' }, 'Do you know your dates yet?'), h('div', { class: 'seg' }, seg('rough', 'Not yet'), seg('exact', 'Yes, I do')), inner];
       }
+
+      function howPart() {
+        const row = (x, extra) => h('button', { type: 'button', class: 'how-row' + (x[3] ? '' : ' off') + (extra || ''), disabled: !x[3],
+          'aria-pressed': String(st.how === x[0]), onclick: () => { st.how = x[0]; st.howOpen = false; draw(); } },
+          h('span', { class: 'how-t' }, h('strong', null, x[1]), h('span', { class: 'muted' }, x[2])),
+          x[3] ? h('span', { class: 'how-go', 'aria-hidden': 'true' }, '›') : h('span', { class: 'soon-tag' }, 'Soon'));
+        let pick;
+        if (!st.how || st.howOpen) pick = h('div', { class: 'how-list' }, HOWS.map(x => row(x, st.how === x[0] ? ' on' : '')));
+        else {
+          const cur = HOWS.find(x => x[0] === st.how);
+          pick = h('button', { type: 'button', class: 'how-row on dd', 'aria-haspopup': 'true', 'aria-expanded': 'false', onclick: () => { st.howOpen = true; draw(); } },
+            h('span', { class: 'how-t' }, h('strong', null, cur[1]), h('span', { class: 'muted' }, cur[2])), h('span', { class: 'how-go', 'aria-hidden': 'true' }, '⌄'));
+        }
+        const out = [h('div', { class: 'q' }, 'How do you want to start?'), pick];
+        if (st.how === 'inspire' && !st.howOpen) {
+          const chip = (label, on, fn) => h('button', { type: 'button', class: 'len-pill' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: fn }, label);
+          out.push(h('div', { class: 'q sub' }, 'What do you love? ', h('span', { class: 'muted' }, 'Pick any')),
+            h('div', { class: 'len-pills' }, LOVES.map(l => chip(l, st.loves.indexOf(l) >= 0, () => {
+              st.loves = st.loves.indexOf(l) >= 0 ? st.loves.filter(x => x !== l) : st.loves.concat([l]); draw(); }))),
+            h('div', { class: 'q sub' }, 'Pace?'),
+            h('div', { class: 'len-pills' }, PACES.map(pc => chip(pc, st.pace === pc, () => { st.pace = pc; draw(); }))));
+        }
+        const ready = st.how === 'inspire' && st.loves.length > 0;
+        out.push(h('div', { class: 'actions start' },
+          h('button', { type: 'button', class: 'btn primary', disabled: !ready, onclick: buildDraft }, 'Build my draft →'),
+          h('span', { class: 'muted' }, ready ? 'Takes about 10 seconds.' : !st.how ? 'Pick how you want to start.' : 'Pick at least one thing you love.')),
+          h('button', { type: 'button', class: 'link-btn empty-start', onclick: () => createTrip(null) }, 'Or start with an empty trip'));
+        return out;
+      }
+
+      // The destination input stays in place (moving it would lose the cursor); only the part below is redrawn.
+      const top = h('div', null, h('div', { class: 'q' }, 'Where are you going?'), h('span', { class: 'ac-wrap' }, dest, acList), h('div', { class: 'gap' }));
+      function draw() {
+        if (st.busy || st.draft) return;
+        top.classList.remove('hidden');
+        const parts = datesPart();
+        if (st.step === 1) parts.push(h('div', { class: 'actions start' },
+          h('button', { type: 'button', class: 'btn primary', disabled: !(destOk() && datesOk()), onclick: () => { st.step = 2; draw(); } }, 'Next →'),
+          h('span', { class: 'muted' }, !destOk() ? 'Add where you\'re going.' : !datesOk() ? 'Answer the dates question.' : '')));
+        else { parts.push(h('div', { class: 'step2' + (st.shown ? '' : ' reveal') }, howPart())); st.shown = true; }
+        body.replaceChildren(...parts);
+        if (st.step === 2 && (!destOk() || !datesOk())) { st.step = 1; draw(); }
+      }
+
+      /* Inspire me → draft-trip function → places looked up → "At a glance" */
+      async function buildDraft() {
+        err.classList.add('hidden'); st.busy = true; top.classList.add('hidden');
+        body.replaceChildren(h('div', { class: 'busy' }, h('div', { class: 'spinner', 'aria-hidden': 'true' }),
+          h('strong', null, 'Building your draft…'), h('span', { class: 'muted' }, 'Picking places for ' + st.dest.trim() + ', ' + plural(lengthOf(), 'day') + '.')));
+        const { data, error } = await sb.functions.invoke('draft-trip', { body: {
+          destination: st.dest.trim(), days: lengthOf(), start: st.mode === 'exact' ? st.start : null, loves: st.loves, pace: st.pace } });
+        st.busy = false;
+        if (error || !data || !data.draft) {
+          let m = 'Couldn\'t build a draft just now. Try again, or start with an empty trip.';
+          try { const j = error && error.context && await error.context.json(); if (j && j.error) m = j.error; } catch (e) { /* keep the plain message */ }
+          draw(); showErr(m); return;
+        }
+        const r = LAYOUT.fromDraft(data.draft.phases, lengthOf());
+        if (!r.layout.phases.length) { draw(); showErr('The draft came back empty. Try again.'); return; }
+        // Find each stop on the map (in parallel), for pins and phase country names later.
+        const why = {};
+        data.draft.phases.forEach(ph => (ph.stops || []).forEach(s => { why[String(s.place).trim()] = { why: s.why, country: s.country }; }));
+        const stops = [];
+        r.layout.phases.forEach(p => LAYOUT.stopsOf(p).forEach(s => stops.push({ place: s.place, n: s.n, colour: p.colour, phase: p.id, why: (why[s.place] || {}).why })));
+        const found = await Promise.all(stops.map(s => PLACES.lookup(s.place, (why[s.place] || {}).country)));
+        stops.forEach((s, k) => { const f = found[k]; if (f) { s.lat = f.lat; s.lng = f.lng; s.country = f.country; s.label = f.label; } });
+        st.draft = data.draft; st.layout = r.layout; st.stops = stops; st.shortened = r.shortened;
+        glance();
+      }
+
+      function glance() {
+        box.classList.add('wide'); top.classList.add('hidden');
+        const L = st.layout, total = LAYOUT.total(L);
+        const bar = h('div', { class: 'tl small' }, L.phases.map(p => h('div', { class: 'tl-ph on', style: { flex: p.days.length, background: p.colour } },
+          h('b', null, p.name || ''), h('span', null, plural(p.days.length, 'day')))),
+          L.free.length ? h('div', { class: 'tl-free', style: { flex: L.free.length } }, plural(L.free.length, 'day') + ' to plan') : null);
+        const list = h('div', { class: 'glance-list' });
+        L.phases.forEach(p => {
+          list.append(h('div', { class: 'g-ph' }, h('i', { class: 'pc-sw', style: { background: p.colour } }), h('strong', null, p.name || 'Phase'), h('span', { class: 'muted' }, plural(p.days.length, 'day'))));
+          st.stops.filter(s => s.phase === p.id).forEach(s => list.append(h('div', { class: 'g-stop' },
+            h('span', { class: 'f-ico' }, svg(PIN(p.colour))),
+            h('div', null, h('div', null, h('strong', null, s.place), h('span', { class: 'muted' }, ' · ' + plural(s.n, 'night'))), s.why ? h('div', { class: 'muted g-why' }, s.why) : null))));
+        });
+        const mapUrl = PLACES.staticMap(st.stops, 560, 300);
+        body.replaceChildren(
+          h('div', { class: 'glance' },
+            h('div', { class: 'q' }, 'At a glance'),
+            h('h3', { class: 'g-title' }, st.dest.trim()),
+            h('p', { class: 'g-desc' }, st.draft.description || ''),
+            bar,
+            h('div', { class: 'g-cols' }, list, mapUrl ? h('img', { class: 'g-map', src: mapUrl, alt: 'Map of the drafted route', width: 560, height: 300 }) : null),
+            st.shortened ? h('div', { class: 'notice' }, 'The draft was longer than ' + plural(total, 'day') + ', so the last stops were shortened.') : null,
+            h('div', { class: 'actions start' },
+              h('button', { type: 'button', class: 'btn primary', onclick: () => createTrip(st.layout) }, 'Looks good · start planning from this draft'),
+              h('button', { type: 'button', class: 'btn', onclick: () => { st.draft = null; st.layout = null; box.classList.remove('wide'); draw(); } }, 'Try a different start'))));
+      }
+
+      /* Save: the trip, then (from a draft) its phases and days in one apply_layout, and the places found. */
+      async function createTrip(layout) {
+        err.classList.add('hidden');
+        const btns = box.querySelectorAll('button'); btns.forEach(b => { b.disabled = true; });
+        const fail = m => { btns.forEach(b => { b.disabled = false; }); showErr(m); };
+        const fields = { name: st.dest.trim().slice(0, 80), start_date: st.mode === 'exact' ? st.start : null, length_days: lengthOf(), owner_id: session.user.id,
+          destination: st.dest.trim(), destination_places: st.picks.map(p => ({ name: p.name, kind: p.kind, country: p.country, cc: p.cc, lat: p.lat, lng: p.lng })) };
+        if (layout && st.draft && st.draft.description) fields.subtitle = String(st.draft.description).slice(0, 300);
+        let { data, error } = await sb.from('trips').insert(fields).select().single();
+        if (error && /destination/.test(error.message || '')) {   // before migration 004
+          delete fields.destination; delete fields.destination_places;
+          ({ data, error } = await sb.from('trips').insert(fields).select().single());
+        }
+        if (error) { fail(errText(error)); return; }
+        if (layout) {
+          const rows = LAYOUT.toRows(layout);
+          const r = await sb.rpc('apply_layout', { p_trip: data.id, p_expect: data.updated_at, p_phases: rows.phases, p_days: rows.days });
+          if (r.error) { fail('The trip was made, but the draft couldn\'t be saved: ' + errText(r.error)); return; }
+          const seen = {};
+          const places = st.stops.filter(s => s.lat != null && !seen[s.place] && (seen[s.place] = 1))
+            .map(s => ({ trip_id: data.id, name: s.place, lat: s.lat, lng: s.lng, country: s.country || null, found_as: s.label || null }));
+          if (places.length) sb.from('places').upsert(places, { onConflict: 'trip_id,name' }).then(x => { if (x && x.error) console.warn('places not saved', x.error.message); });
+        } else {
+          const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
+          pendingStop = one;
+        }
+        close(); location.hash = '#/trip/' + data.id;
+      }
+
       draw();
-      box.append(h('h2', null, 'New trip'),
-        h('form', { novalidate: true, onsubmit: async ev => {
-          ev.preventDefault();
-          if (!name.value.trim()) { name.focus(); err.textContent = 'Give your trip a name.'; err.classList.remove('hidden'); return; }
-          if (st.mode === 'exact' && !st.start) { body.querySelector('input[type=date]').focus(); err.textContent = 'Pick a start date, or choose "Not yet".'; err.classList.remove('hidden'); return; }
-          err.classList.add('hidden');
-          create.disabled = true; create.textContent = 'Creating…';
-          const { data, error } = await sb.from('trips')
-            .insert({ name: name.value.trim(), start_date: st.mode === 'exact' ? st.start : null, length_days: lengthOf(), owner_id: session.user.id })
-            .select().single();
-          if (error) { err.textContent = errText(error); err.classList.remove('hidden'); create.disabled = false; create.textContent = 'Start planning →'; return; }
-          close(); location.hash = '#/trip/' + data.id;
-        } },
-          name, body, err,
-          h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'), create),
-          h('div', { class: 'import-row' }, h('div', null, h('strong', null, 'Already have a plan? Import it'), h('span', { class: 'soon-tag' }, 'Soon')),
-            h('div', { class: 'muted' }, 'Paste a Google Sheet or website link and we\'ll fill in your days, places and phases.'))));
+      box.append(h('h2', null, 'New trip'), top, body, err);
     });
   }
 
@@ -320,7 +476,7 @@
 
   async function tripView(id, tab) {
     if (!tripData || tripData.trip.id !== id) {
-      loading(); editingDates = false; settingStart = false; curPhase = 0; lastPhase = 0; addingPhase = false; resetDraft();
+      loading(); editingDates = false; settingStart = false; curPhase = 0; lastPhase = 0; addingPhase = false; resetDraft(); if (pendingStop) { draft.text = pendingStop.name; draft.pick = pendingStop; pendingStop = null; }
       try { tripData = await loadTrip(id); }
       catch (e) { show(topbar(), h('main', null, h('div', { class: 'notice warn' }, 'Couldn\'t load this trip: ' + errText(e)))); return; }
       if (!tripData) {
