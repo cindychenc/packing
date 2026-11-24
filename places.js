@@ -65,20 +65,45 @@
   }
 
 
-  // The best match for a name, or null (used to place the stops of a drafted trip).
-  async function lookup(name, country) {
-    const q = [name, country].filter(Boolean).join(', ');
+  // Country name → ISO code ("Kyrgyzstan" → "KG"), from the browser's own country names plus a few other spellings.
+  let NAME_CC = null;
+  function ccFor(country) {
+    if (!country) return null;
+    if (!NAME_CC) {
+      NAME_CC = { 'kyrgyz republic': 'KG', 'turkey': 'TR', 'türkiye': 'TR', 'usa': 'US', 'united states of america': 'US', 'uk': 'GB',
+        'england': 'GB', 'scotland': 'GB', 'wales': 'GB', 'russia': 'RU', 'south korea': 'KR', 'north korea': 'KP', 'vietnam': 'VN',
+        'laos': 'LA', 'czech republic': 'CZ', 'czechia': 'CZ', 'ivory coast': 'CI', 'burma': 'MM', 'myanmar': 'MM', 'holland': 'NL' };
+      try { const dn = new Intl.DisplayNames(['en'], { type: 'region' }); Object.keys(BY_CC).forEach(cc => { const n = dn.of(cc); if (n) NAME_CC[n.toLowerCase()] = cc; }); }
+      catch (e) { /* older browsers: the list above only */ }
+    }
+    const k = String(country).trim().toLowerCase();
+    return NAME_CC[k] || (/^[a-z]{2}$/.test(k) && BY_CC[k.toUpperCase()] ? k.toUpperCase() : null);
+  }
+  const km = (a, b) => { const r = Math.PI / 180, x = (b.lng - a.lng) * r * Math.cos((a.lat + b.lat) / 2 * r), y = (b.lat - a.lat) * r; return Math.sqrt(x * x + y * y) * 6371; };
+
+  /* Where a drafted stop is, or null. Searches only inside its country, so "Song-Kol, Kyrgyzstan" can't land in Vietnam.
+     near = the rough { lat, lng } Claude gave: a match much further away than that is wrong, and lakes, valleys and
+     passes (which the geocoder doesn't know) fall back to it, marked approx. */
+  async function lookup(name, country, near) {
     const fake = root.SUITCASE_PLACES_FAKE;
     if (fake) { const k = (name || '').toLowerCase(); return fake.find(p => p.name.toLowerCase() === k) || null; }
     const token = (root.SUITCASE_CONFIG || {}).mapboxToken;
-    if (!token || !q.trim()) return null;
+    const cc = ccFor(country);
+    const ok = near && isFinite(near.lat) && isFinite(near.lng) && Math.abs(near.lat) <= 90 && Math.abs(near.lng) <= 180 && !(near.lat === 0 && near.lng === 0);
+    const rough = ok ? { name, label: country || '', kind: 'place', country: country || null, cc, lat: +near.lat, lng: +near.lng, approx: true } : null;
+    if (!token || !String(name || '').trim()) return rough;
     try {
-      const res = await fetch('https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(q) +
-        '&limit=1&types=place,locality,region,country&language=en&access_token=' + encodeURIComponent(token));
-      if (!res.ok) return null;
+      const res = await fetch('https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(name) + (cc ? '&country=' + cc.toLowerCase() : '') +
+        (ok ? '&proximity=' + (+near.lng) + ',' + (+near.lat) : '') +
+        '&limit=1&types=place,locality,region,district&language=en&access_token=' + encodeURIComponent(token));
+      if (!res.ok) return rough;
       const f = ((await res.json()).features || [])[0];
-      return f ? fromFeature(f) : null;
-    } catch (e) { return null; }
+      const p = f ? fromFeature(f) : null;
+      if (!p || p.lat == null) return rough;
+      if (cc && p.cc && p.cc.toUpperCase() !== cc) return rough;
+      if (ok && km(p, near) > 250) return rough;
+      return p;
+    } catch (e) { return rough; }
   }
 
   // Google's encoded polyline (precision 5), as Mapbox Static Images wants for path overlays.
@@ -102,7 +127,7 @@
       '@2x?padding=40&access_token=' + encodeURIComponent(token);
   }
 
-  const api = { suggest, lookup, staticMap, polyline, phaseNameFor, continentOf, fromFeature };
+  const api = { suggest, lookup, ccFor, km, staticMap, polyline, phaseNameFor, continentOf, fromFeature };
   root.SuitcasePlaces = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

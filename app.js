@@ -481,7 +481,7 @@
         const want = {};
         draft.routes.forEach(r => r.phases.forEach(p => (p.stops || []).forEach(s => { s.place = String(s.place || '').trim(); want[s.place + '|' + (s.country || '')] = s; })));
         const keys = Object.keys(want).slice(0, 40);
-        const found = await Promise.all(keys.map(k => PLACES.lookup(want[k].place, want[k].country)));
+        const found = await Promise.all(keys.map(k => PLACES.lookup(want[k].place, want[k].country, { lat: want[k].lat, lng: want[k].lng })));
         const at = {}; keys.forEach((k, i) => { if (found[i]) at[k] = found[i]; });
         st.draft = draft;
         st.routes = draft.routes.map(r => {
@@ -679,7 +679,7 @@
         lbl.textContent = st.step === 'import' ? 'New trip · Import a plan' : 'New trip · ' + ({ where: 1, sentence: 2, routes: 3 }[st.step]) + ' of 3';
         if (st.busy) {
           body.replaceChildren(h('div', { class: 'busy' }, h('div', { class: 'spinner', 'aria-hidden': 'true' }), h('strong', null, 'Drawing up three routes…'),
-            h('span', { class: 'muted' }, destName() + ', ' + plural(lengthOf(), 'day') + (lengthOf() > 30 ? '. Longer trips take up to a minute.' : '. This takes about 20 seconds.'))));
+            h('span', { class: 'muted' }, destName() + ', ' + plural(lengthOf(), 'day') + (lengthOf() > 45 ? '. Long trips take a minute or two.' : lengthOf() > 20 ? '. This takes up to a minute.' : '. This takes about 20 seconds.'))));
           foot.replaceChildren(); return;
         }
         if (st.step === 'where') {

@@ -20,6 +20,11 @@ ok(rq.who === 'by myself' && eq(rq.loves, ['food & wine', 'nightlife']) && rq.fr
 ok(T.optionsFor('from', ctx)[0] === 'Santiago' && T.extrasFor({ exactDates: true }, []).every(e => e[0] !== 'when'), 'start point offers step-1 places; no "when" with exact dates');
 ok(T.lengthText(21, '3 weeks') === '3-week' && T.lengthText(14, null) === '14-day' && T.lengthText(3, 'Weekend') === 'weekend', 'length text');
 
+// places: a country name narrows the search
+const P = require('../places.js');
+ok(P.ccFor('Kyrgyzstan') === 'KG' && P.ccFor('Kyrgyz Republic') === 'KG' && P.ccFor('Vietnam') === 'VN' && P.ccFor('nowhere') === null, 'country names to codes');
+ok(P.km({ lat: 41.85, lng: 75.13 }, { lat: 21.0, lng: 105.8 }) > 3000, 'Song-Kol, Kyrgyzstan is nowhere near Vietnam');
+
 // dates
 ok(T.addDays('2027-04-05', 13) === '2027-04-18' && T.daysIncl('2027-04-05', '2027-04-18') === 14, 'date maths');
 const g = T.monthGrid(2027, 3); ok(g[0] === null && g.indexOf('2027-04-01') === 3 && g[g.length - 1] === '2027-04-30', 'April 2027 starts on a Thursday');

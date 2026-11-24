@@ -175,7 +175,8 @@ Rules:
 - Keep every stop within the nights per stop given. For more days, use more stops, never longer stays.
   Coming back through a town later is fine if the route needs it.
 - Each stop is one base, usually a town or city. Use the place's common English name, as it appears on a map.
-  No hotels, trails or neighbourhoods as stops.
+  No hotels, trails or neighbourhoods as stops. A lake or valley camp is fine for a hike or yurt stay.
+- Give each stop its country and rough coordinates, so it lands in the right place on the map.
 - Include the towns named in the route's highlights as stops, in the phase they belong to.
 - Order stops along a realistic route. Long transfers eat into a stop.
 - A phase marked "long stays" is meant as a few long stays in one area: the nights per stop don't apply there.
@@ -205,6 +206,16 @@ export function stopsMessage(r: Ask, route: any): string {
     '', NOTE].join('\n');
 }
 
+// When a phase still comes back short, one more try for that route, showing what it had.
+export function repairMessage(r: Ask, route: any, phases: any[], short: { name: string; have: number; want: number }[]): string {
+  const [lo, hi] = nightsFor(r.pace);
+  const had = phases.map((p: any) => `${p.name}: ` + (p.stops ?? []).map((s: any) => `${s.place} ${s.nights}`).join(', '));
+  const gaps = short.map((x) => `- ${x.name}: ${x.have} nights, needs ${x.want} (${x.want - x.have} more, so about ${Math.ceil((x.want - x.have) / hi)}–${Math.max(1, Math.floor((x.want - x.have) / lo))} more stops)`);
+  return [stopsMessage(r, route), '', 'Your first answer was:', ...had, '', 'These phases came up short:', ...gaps, '',
+    'Answer again with every phase. Keep the stops you had and add new stops where a phase is short, so each phase adds up exactly.',
+    'Don\'t make existing stays longer than the nights per stop.'].join('\n');
+}
+
 export const STOPS_TOOL = {
   name: 'make_stops',
   description: 'Return the stops for each phase of the route.',
@@ -221,10 +232,12 @@ export const STOPS_TOOL = {
             stops: {
               type: 'array', minItems: 1,
               items: {
-                type: 'object', required: ['place', 'country', 'nights', 'why'],
+                type: 'object', required: ['place', 'country', 'lat', 'lng', 'nights', 'why'],
                 properties: {
                   place: { type: 'string', description: 'Town or city, common English name.' },
-                  country: { type: 'string' },
+                  country: { type: 'string', description: 'The country it is in, common English name.' },
+                  lat: { type: 'number', description: 'Rough latitude, 2 decimals. Used to put it on the map.' },
+                  lng: { type: 'number', description: 'Rough longitude, 2 decimals.' },
                   nights: { type: 'integer', minimum: 1 },
                   why: { type: 'string', description: 'One sentence, at most 20 words.' },
                   next: { type: 'string', enum: MODES, description: 'How to get to the next stop. Leave out on the last stop of the route.' },

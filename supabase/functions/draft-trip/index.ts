@@ -2,7 +2,7 @@
 // Runs on Supabase (Deno). Needs the secret ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
 // The key never reaches the browser. Only signed-in people can call this, up to DAILY_LIMIT drafts a day.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, type Ask } from './prompt.ts';
+import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, repairMessage, type Ask } from './prompt.ts';
 
 const DAILY_LIMIT = 20;
 const ALLOWED = ['https://packing.boringcase.com', 'http://localhost:8000'];
@@ -86,23 +86,42 @@ Deno.serve(async (req) => {
   });
 
   // Step 2: the stops for each route, all three at once.
-  const filled = await Promise.all(routes.map((r: any) => ask_(STOPS_SYSTEM, STOPS_TOOL, stopsMessage(ask, r), Math.min(20000, 3000 + ask.days * 200))));
+  const stopTokens = Math.min(20000, 3000 + ask.days * 200);
+  const tidyPhases = (r: any, got: any) => {
+    const list = Array.isArray(got?.phases) ? got.phases : [];
+    return r.phases.map((p: any, j: number) => {
+      const m = list.find((g: any) => g?.name === p.name) ?? list[j];
+      const stops = (Array.isArray(m?.stops) ? m.stops : []).filter((s: any) => s && String(s.place ?? '').trim());
+      stops.forEach((st: any) => {
+        st.nights = Math.max(1, Math.round(+st.nights) || 1);
+        if (st.next && !MODES.includes(st.next)) st.next = 'bus';
+        st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
+        if (!(Math.abs(+st.lat) <= 90 && Math.abs(+st.lng) <= 180)) { delete st.lat; delete st.lng; }
+      });
+      return { name: p.name, stops };
+    });
+  };
+  const shortOf = (r: any, phases: any[]) => phases.map((p: any, j: number) => ({ name: p.name, want: r.phases[j].days,
+    have: p.stops.reduce((a: number, s: any) => a + s.nights, 0) })).filter((x: any) => x.have < x.want);
+  const missing = (s: any[]) => s.reduce((a: number, x: any) => a + x.want - x.have, 0);
+
+  const first = await Promise.all(routes.map((r: any) => ask_(STOPS_SYSTEM, STOPS_TOOL, stopsMessage(ask, r), stopTokens)));
+  const filled = routes.map((r: any, i: number) => tidyPhases(r, first[i]));
+  // Step 3, only where needed: routes with a phase short by 2+ nights get one more try (in parallel), kept if it's closer.
+  const redo = routes.map((r: any, i: number) => ({ i, short: shortOf(r, filled[i]) })).filter((x: any) => missing(x.short) >= 2);
+  if (redo.length) {
+    redo.forEach((x: any) => console.warn('short', routes[x.i].name, JSON.stringify(x.short)));
+    const again = await Promise.all(redo.map((x: any) => ask_(STOPS_SYSTEM, STOPS_TOOL, repairMessage(ask, routes[x.i], filled[x.i], x.short), stopTokens)));
+    redo.forEach((x: any, k: number) => {
+      const next = tidyPhases(routes[x.i], again[k]);
+      if (next.every((p: any) => p.stops.length) && missing(shortOf(routes[x.i], next)) < missing(x.short)) filled[x.i] = next;
+      else console.warn('repair did not help', routes[x.i].name);
+    });
+  }
   const ready: any[] = [];
   routes.forEach((r: any, i: number) => {
-    const got = Array.isArray(filled[i]?.phases) ? filled[i].phases : [];
-    const phases = r.phases.map((p: any, j: number) => {
-      const m = got.find((g: any) => g?.name === p.name) ?? got[j];
-      const stops = (Array.isArray(m?.stops) ? m.stops : []).filter((s: any) => s && String(s.place ?? '').trim());
-      const n = stops.reduce((a: number, s: any) => a + (Math.round(+s.nights) || 1), 0);
-      if (n !== p.days) console.warn('stop nights', r.name, p.name, n, 'of', p.days);
-      return { name: p.name, stops };
-    }).filter((p: any) => p.stops.length);
-    if (!phases.length) return;
-    phases.forEach((p: any) => p.stops.forEach((st: any) => {
-      if (st.next && !MODES.includes(st.next)) st.next = 'bus';
-      st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
-    }));
-    ready.push({ ...r, phases, highlights: (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl) });
+    const phases = filled[i].filter((p: any) => p.stops.length);
+    if (phases.length) ready.push({ ...r, phases, highlights: (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl) });
   });
   if (!ready.length) return fail();
   const shared = (Array.isArray(outline.shared) ? outline.shared : []).map(fixHl);
