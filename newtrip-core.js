@@ -95,15 +95,28 @@
 
   /* ───────── routes ───────── */
 
-  /* Make a route's nights add up to the trip length: extra nights come off the end, missing ones go to the longest stop. */
-  function fitNights(phases, total) {
+  /* The most nights per stop for a pace answer: "1–2 nights" → 2, "2–3 nights" → 3, "3+ nights" → 5; anything typed → 4. */
+  function paceCap(pace) {
+    const m = /(\d+)\s*[–-]\s*(\d+)\s*nights?/.exec(pace || ''), plus = /(\d+)\+\s*nights?/.exec(pace || '');
+    return m ? +m[2] : plus ? +plus[1] + 2 : 4;
+  }
+
+  /* Make a route's nights fit the trip length.
+     Too many: nights come off the end. Too few: the shortest stops get a night each, never past the pace's most nights per stop;
+     whatever is still missing stays as days to plan (returned as left), instead of one very long stay. */
+  function fitNights(phases, total, cap) {
+    cap = cap || 99;
     const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => { s.nights = Math.max(1, Math.round(+s.nights || 1)); stops.push(s); }));
     let sum = stops.reduce((a, s) => a + s.nights, 0);
     for (let i = stops.length - 1; i >= 0 && sum > total; i--) {
       const cut = Math.min(stops[i].nights - 1, sum - total); stops[i].nights -= cut; sum -= cut;
     }
-    if (sum < total && stops.length) { const big = stops.reduce((a, s) => (s.nights > a.nights ? s : a), stops[0]); big.nights += total - sum; sum = total; }
-    return sum;   // can still be over the length when there are more stops than days
+    while (sum < total) {
+      const room = stops.filter(s => s.nights < cap); if (!room.length) break;
+      const low = Math.min(...room.map(s => s.nights));
+      for (const s of room) { if (sum >= total) break; if (s.nights === low) { s.nights++; sum++; } }
+    }
+    return { sum, left: Math.max(0, total - sum) };
   }
 
   // Words the voice guide rules out; a highlight or pitch using one is still shown, minus exclamation marks.
@@ -248,7 +261,7 @@
   }
 
   const api = { BLANKS, REQUIRED, EXTRAS, optionsFor, extrasFor, tokens, missing, lengthText, request, listText,
-    addDays, daysIncl, isIso, monthGrid, fitNights, tidy, parseDelimited, readXlsx, planFromRows, cellDate };
+    addDays, daysIncl, isIso, monthGrid, fitNights, paceCap, tidy, parseDelimited, readXlsx, planFromRows, cellDate };
   root.SuitcaseNewTrip = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

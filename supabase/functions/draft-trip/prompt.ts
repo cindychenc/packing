@@ -17,13 +17,15 @@ Routes:
 - Make the three routes genuinely different: a different first week, a different way of getting around, or a different region.
   Don't make three versions of the same trip with one stop swapped.
 - Use exactly the number of days given. In each route, the nights of all stops must add up to that number.
-- Group each route's stops into 1–6 phases. A phase is a region or a country the traveller moves through,
+- Group each route's stops into 1–8 phases. A phase is a region or a country the traveller moves through,
   named the way a traveller would say it ("Patagonia", "Northern Peru", "Kyoto & Kansai").
 - Each stop is one base, usually a town or city, where the traveller sleeps one or more nights.
   Use the place's common English name, as it appears on a map. No hotels, trails or neighbourhoods as stops.
 - Order stops along a realistic route with no backtracking unless there's no other way. Long transfers eat into a stop.
 - For each stop, say how the traveller gets to the next stop (fly, bus, drive, train or boat). The last stop has none.
-- Pace: "slowly" means 3+ nights at most stops; "steadily" means 2–3; "quickly" means 1–2.
+- Pace: "slowly" means 3+ nights at most stops; "steadily" means 2–3; "quickly" means 1–2. Keep to it for long trips too:
+  a two-month trip at 2–3 nights per stop needs 20–30 stops, not a few very long stays. Use more phases and more stops instead.
+- Before answering, add up the nights of each route. Each total must equal the length exactly.
 - Respect what they love, what they must do, and what they'd rather avoid. If they give a start or end point, use it.
 - Think about the season: if a date or season is given, avoid places that are closed, snowed in or at their worst then.
 - If the destination is too vague or too big for the length, pick a sensible part of it and say so in the description.
@@ -69,7 +71,15 @@ export type Ask = {
 };
 
 // The message for one request, built from the sentence the traveller filled in.
+// Nights per stop for each pace answer; anything typed gets a middle range.
+function nightsFor(pace: string | null): [number, number] {
+  const m = /(\d+)\s*[–-]\s*(\d+)/.exec(pace ?? ''), plus = /(\d+)\+/.exec(pace ?? '');
+  return m ? [+m[1], +m[2]] : plus ? [+plus[1], +plus[1] + 2] : [2, 4];
+}
+
 export function userMessage(r: Ask): string {
+  const [lo, hi] = nightsFor(r.pace);
+  const stops = `about ${Math.max(1, Math.ceil(r.days / hi))}–${Math.max(1, Math.floor(r.days / lo))} stops per route (${lo}–${hi} nights each), adding up to exactly ${r.days} nights`;
   const when = r.start ? `starting ${r.start}` : r.when ? r.when : 'dates not set yet';
   const lines = [
     `Destination: ${r.destination}`,
@@ -77,6 +87,7 @@ export function userMessage(r: Ask): string {
     `Who: ${r.who ?? 'not said'}`,
     `Loves: ${r.loves.length ? r.loves.join('; ') : 'anything'}`,
     `Pace: ${r.pace ?? 'steadily'}`,
+    `So: ${stops}.`,
   ];
   if (r.from) lines.push(`Start point: ${r.from}`);
   if (r.to) lines.push(`End point: ${r.to}`);
@@ -118,7 +129,7 @@ export const TOOL = {
             best_for: { type: 'array', items: { type: 'string' }, maxItems: 3 },
             highlights: { type: 'array', minItems: 2, maxItems: 4, items: highlight },
             phases: {
-              type: 'array', minItems: 1, maxItems: 6,
+              type: 'array', minItems: 1, maxItems: 8,
               items: {
                 type: 'object', required: ['name', 'stops'],
                 properties: {

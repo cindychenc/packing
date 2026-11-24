@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 10000,
+      max_tokens: Math.min(32000, 8000 + ask.days * 200),   // long trips have many stops
       system: SYSTEM,
       tools: [TOOL],
       tool_choice: { type: 'tool', name: TOOL.name },
@@ -77,6 +77,11 @@ Deno.serve(async (req) => {
     r.highlights = (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl);
     r.phases.forEach((p: any) => (p.stops ?? []).forEach((st: any) => { if (st.next && !MODES.includes(st.next)) st.next = 'bus'; }));
   });
+  routes.forEach((r: any) => {   // logged so mismatches show up in the function logs; the app fits them
+    const n = r.phases.reduce((a: number, p: any) => a + (p.stops ?? []).reduce((b: number, st: any) => b + (+st.nights || 0), 0), 0);
+    if (n !== ask.days) console.warn('nights', r.name, n, 'of', ask.days);
+  });
+  if (out.stop_reason === 'max_tokens') console.warn('answer cut off at max_tokens', ask.days, 'days');
   const shared = (Array.isArray(draft.shared) ? draft.shared : []).map(fixHl);
   return reply(200, { draft: { description: String(draft.description ?? ''), shared, routes }, model: MODEL });
 });

@@ -27,7 +27,10 @@ const g = T.monthGrid(2027, 3); ok(g[0] === null && g.indexOf('2027-04-01') === 
 // fit nights
 let ph = [{ stops: [{ nights: 3 }, { nights: 9 }] }, { stops: [{ nights: 12 }] }];
 T.fitNights(ph, 21); ok(eq(ph.map(p => p.stops.map(s => s.nights)), [[3, 9], [9]]), 'too long: trimmed from the end');
-ph = [{ stops: [{ nights: 2 }, { nights: 5 }] }]; T.fitNights(ph, 10); ok(eq(ph[0].stops.map(s => s.nights), [2, 8]), 'too short: longest stop grows');
+ph = [{ stops: [{ nights: 2 }, { nights: 5 }] }]; T.fitNights(ph, 10); ok(eq(ph[0].stops.map(s => s.nights), [5, 5]), 'too short: shortest stops grow first');
+ph = [{ stops: [{ nights: 2 }, { nights: 3 }, { nights: 2 }] }]; let fit = T.fitNights(ph, 60, 3);
+ok(eq(ph[0].stops.map(s => s.nights), [3, 3, 3]) && fit.left === 51, 'a 2-month trip with too few stops: no stop past 3 nights, the rest left to plan');
+ok(T.paceCap('steadily, 2–3 nights per stop') === 3 && T.paceCap('quickly, 1–2 nights per stop') === 2 && T.paceCap('slowly, 3+ nights per stop') === 5 && T.paceCap('whatever') === 4, 'pace caps');
 
 // csv / tsv
 let rows = T.parseDelimited('Place,Nights,Region\nSantiago,2,Chile\n"Puerto Natales, Chile",6,Patagonia\nEl Chaltén,5,Patagonia\n');

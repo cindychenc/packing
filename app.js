@@ -485,7 +485,7 @@
         const at = {}; keys.forEach((k, i) => { if (found[i]) at[k] = found[i]; });
         st.draft = draft;
         st.routes = draft.routes.map(r => {
-          NT.fitNights(r.phases, total);
+          const fit = NT.fitNights(r.phases, total, NT.paceCap(st.ans.pace));
           const L = LAYOUT.fromDraft(r.phases, total).layout;
           const stops = [];
           r.phases.forEach((p, pi) => (p.stops || []).forEach(s => {
@@ -494,7 +494,7 @@
             stops.push({ place: s.place, n: s.nights, why: s.why, next: s.next || null, colour: lp ? lp.colour : '#3F5675', phase: lp ? lp.id : null,
               lat: f.lat, lng: f.lng, country: f.country || s.country, label: f.label });
           }));
-          return { r, layout: L, stops };
+          return { r, layout: L, stops, left: fit.left };
         });
       }
       function routesPart() {
@@ -509,11 +509,12 @@
               (r.best_for || []).length ? h('span', { class: 'ro-best' }, 'Best for: ' + r.best_for.map(NT.tidy).join(', ')) : null,
               h('span', { class: 'ro-hl' }, (r.highlights || []).map(hl => h('span', { class: 'hr' + (hl.skip ? ' minus' : '') }, svg(hlIcon(hl.kind)),
                 h('span', null, NT.tidy(hl.text), hl.because && !hl.skip ? h('span', { class: 'by' }, NT.tidy(hl.because)) : null)))),
-              h('span', { class: 'ro-stops muted' }, x.stops.map(s => s.place).join(' → ') + ' · ' + plural(x.stops.reduce((a, s) => a + s.n, 0), 'night')),
+              h('span', { class: 'ro-stops muted' }, x.stops.map(s => s.place).join(' → ') + ' · ' + plural(x.stops.reduce((a, s) => a + s.n, 0), 'night') + (x.left ? ' · ' + plural(x.left, 'day') + ' left to plan' : '')),
               h('button', { type: 'button', class: 'btn primary go', onclick: e => { e.stopPropagation(); createTrip({ route: x }); } }, 'Customize this plan →')) : null);
         });
         const tl = h('div', { class: 'tl small mtl' }, cur.layout.phases.map(p => h('div', { class: 'tl-ph on', style: { flex: p.days.length, background: p.colour } },
-          h('b', null, p.name || ''), h('span', null, plural(p.days.length, 'day')))));
+          h('b', null, p.name || ''), h('span', null, plural(p.days.length, 'day')))),
+          cur.layout.free.length ? h('div', { class: 'tl-free', style: { flex: cur.layout.free.length } }, plural(cur.layout.free.length, 'day') + ' to plan') : null);
         return [h('div', { class: 'rhdr' }, h('div', { class: 'nt-ttl' }, 'Three ways through ' + destName()), st.draft.description ? h('p', { class: 'lead' }, NT.tidy(st.draft.description)) : null),
           h('div', { class: 'rgrid' }, h('div', { class: 'rmap' }, tl, mapBox), h('div', { class: 'ropts' }, cards))];
       }
@@ -672,7 +673,7 @@
         lbl.textContent = st.step === 'import' ? 'New trip · Import a plan' : 'New trip · ' + ({ where: 1, sentence: 2, routes: 3 }[st.step]) + ' of 3';
         if (st.busy) {
           body.replaceChildren(h('div', { class: 'busy' }, h('div', { class: 'spinner', 'aria-hidden': 'true' }), h('strong', null, 'Drawing up three routes…'),
-            h('span', { class: 'muted' }, destName() + ', ' + plural(lengthOf(), 'day') + '. This takes about 20 seconds.')));
+            h('span', { class: 'muted' }, destName() + ', ' + plural(lengthOf(), 'day') + (lengthOf() > 30 ? '. Longer trips take up to a minute.' : '. This takes about 20 seconds.'))));
           foot.replaceChildren(); return;
         }
         if (st.step === 'where') {
