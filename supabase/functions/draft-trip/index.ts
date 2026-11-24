@@ -1,8 +1,8 @@
-// Suitcase · draft-trip: turns the answers from "Inspire me" into a rough trip draft with Claude.
+// Suitcase · draft-trip: turns the "finish the sentence" answers into three route options with Claude.
 // Runs on Supabase (Deno). Needs the secret ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
 // The key never reaches the browser. Only signed-in people can call this, up to DAILY_LIMIT drafts a day.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MODEL, SYSTEM, TOOL, userMessage } from './prompt.ts';
+import { MODEL, SYSTEM, TOOL, KINDS, MODES, userMessage, type Ask } from './prompt.ts';
 
 const DAILY_LIMIT = 20;
 const ALLOWED = ['https://packing.boringcase.com', 'http://localhost:8000'];
@@ -32,12 +32,16 @@ Deno.serve(async (req) => {
 
   let body: any;
   try { body = await req.json(); } catch { return reply(400, { error: 'Bad request.' }); }
-  const destination = String(body.destination ?? '').trim().slice(0, 200);
-  const days = Math.round(Number(body.days));
-  const start = /^\d{4}-\d{2}-\d{2}$/.test(body.start ?? '') ? body.start : null;
-  const loves = (Array.isArray(body.loves) ? body.loves : []).map((x: unknown) => String(x).slice(0, 30)).slice(0, 10);
-  const pace = ['Slow', 'Mixed', 'Packed'].includes(body.pace) ? body.pace : 'Mixed';
-  if (!destination || !(days >= 1 && days <= 731)) return reply(400, { error: 'Destination and length are needed.' });
+  const one = (v: unknown, n = 80) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+  const many = (v: unknown) => (Array.isArray(v) ? v : []).map((x) => one(x)).filter((x): x is string => !!x).slice(0, 10);
+  const ask: Ask = {
+    destination: one(body.destination, 200) ?? '',
+    days: Math.round(Number(body.days)),
+    start: /^\d{4}-\d{2}-\d{2}$/.test(body.start ?? '') ? body.start : null,
+    who: one(body.who), loves: many(body.loves), pace: one(body.pace), when: one(body.when),
+    from: one(body.from), to: one(body.to), must: many(body.must), avoid: one(body.avoid),
+  };
+  if (!ask.destination || !(ask.days >= 1 && ask.days <= 731)) return reply(400, { error: 'Destination and length are needed.' });
 
   // Daily limit.
   const since = new Date(Date.now() - 24 * 3600e3).toISOString();
@@ -52,11 +56,11 @@ Deno.serve(async (req) => {
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 4000,
+      max_tokens: 10000,
       system: SYSTEM,
       tools: [TOOL],
       tool_choice: { type: 'tool', name: TOOL.name },
-      messages: [{ role: 'user', content: userMessage({ destination, days, start, loves, pace }) }],
+      messages: [{ role: 'user', content: userMessage(ask) }],
     }),
   });
   if (!res.ok) {
@@ -65,6 +69,14 @@ Deno.serve(async (req) => {
   }
   const out = await res.json();
   const draft = (out.content ?? []).find((c: any) => c.type === 'tool_use')?.input;
-  if (!draft || !Array.isArray(draft.phases)) return reply(502, { error: 'The AI answer didn\'t make sense. Try again.' });
-  return reply(200, { draft, model: MODEL });
+  const routes = Array.isArray(draft?.routes) ? draft.routes.filter((r: any) => Array.isArray(r?.phases) && r.phases.length) : [];
+  if (!routes.length) return reply(502, { error: 'The AI answer didn\'t make sense. Try again.' });
+  // Unknown highlight types and travel modes fall back to ones the app can draw.
+  const fixHl = (h: any) => ({ ...h, kind: KINDS.includes(h?.kind) ? h.kind : 'other' });
+  routes.forEach((r: any) => {
+    r.highlights = (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl);
+    r.phases.forEach((p: any) => (p.stops ?? []).forEach((st: any) => { if (st.next && !MODES.includes(st.next)) st.next = 'bus'; }));
+  });
+  const shared = (Array.isArray(draft.shared) ? draft.shared : []).map(fixHl);
+  return reply(200, { draft: { description: String(draft.description ?? ''), shared, routes }, model: MODEL });
 });

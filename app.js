@@ -238,31 +238,71 @@
       body));
   }
 
-  // New trip pop-up (wireframe frames 2–3). "Not yet" = a length only; "Yes, I do" = start date + length.
+  /* ───────────── new trip pop-up ─────────────
+     Canvas "Design · New trip prototype", frames 1a–1d:
+     1 · where + dates → 2 · finish the sentence → 3 · three routes on a map → Customize this plan.
+     Or, from step 1: Copy / import an existing plan (rows pasted from a sheet, or a .csv / .xlsx file). */
+  const NT = window.SuitcaseNewTrip;
   const ROUGH = [['weekend', 'Weekend', 3], ['w1', '1 week', 7], ['w2', '2 weeks', 14], ['w3', '3 weeks', 21]];
-  /* New trip pop-up (canvas "Design · New trip prototype", frames 2–3).
-     Step 1: where you're going + dates, then Next. Step 2: how to start: Inspire me (AI draft) or an empty trip.
-     The AI draft is shown "At a glance" in the pop-up and only saved when you say it looks good. */
-  const LOVES = ['Hiking', 'Nature', 'Food', 'History', 'Cities', 'Beaches'];
-  const PACES = ['Slow', 'Mixed', 'Packed'];
-  const HOWS = [
-    ['inspire', 'Inspire me', 'Answer 2 quick questions, get a starting plan', true],
-    ['vague', 'I have a vague idea', 'Describe what you know in your own words', false],
-    ['paste', 'I know my plan', 'Paste a guide, sheet or notes', false]];
   let pendingStop = null;   // first stop to put in "Let's get started." once the new trip opens
 
+  // Icons for highlight types (the KINDS list in supabase/functions/draft-trip/prompt.ts). 24×24, stroked.
+  const HL_ICONS = {
+    hike: 'M3 19l6-10 4 6 2-3 6 7H3zM8 11l1.5 1.5L11 11', mountain: 'M2 20l7-12 4 6 3-4 6 10z', volcano: 'M4 19l5-8h6l5 8zM10 11l.8-3M14 11l-.8-3M12 3.5v2M9 5l1 1.2M15 5l-1 1.2',
+    glacier: 'M3 18l5-8 3 4 3-6 7 10zM9 12l1.5 1.5M14.5 9.5L16 12', valley: 'M2 19l5-11 3 6 2-8 3 8 2-4 5 9zM2 19h20',
+    lake: 'M3 15c2 0 2-1.5 4.5-1.5S10 15 12 15s2-1.5 4.5-1.5S19 15 21 15M3 19c2 0 2-1.5 4.5-1.5S10 19 12 19s2-1.5 4.5-1.5S19 19 21 19M8 10l4-6 4 6',
+    beach: 'M4 20h16M7 20c0-5 2-9 5-11M12 9c-2-3-6-3-8-1 3 0 5 .5 8 1zm0 0c2-3 6-3 8-1-3 0-5 .5-8 1z', island: 'M3 18c3-2 15-2 18 0M12 16V8M12 8c-2-2-5-2-6 0M12 8c2-2 5-2 6 0',
+    wildlife: 'M5 12a2 2 0 1 0 0-.1M9 7a2 2 0 1 0 0-.1M15 7a2 2 0 1 0 0-.1M19 12a2 2 0 1 0 0-.1M8 18c0-3 2-5 4-5s4 2 4 5c0 1.5-2 2-4 2s-4-.5-4-2z',
+    food: 'M7 3v8a2 2 0 0 0 4 0V3M9 11v10M16 3c-1.7 0-3 2.2-3 5s1.3 4 3 4v9', wine: 'M8 3h8l-1 6a3 3 0 0 1-6 0zM12 12v8M8 21h8',
+    city: 'M3 21V9l6-3v15M9 21V4l8 3v14M17 21v-9l4 2v7M2 21h20', culture: 'M4 10h16L12 4zM6 10v8M10 10v8M14 10v8M18 10v8M3 21h18',
+    history: 'M12 12m-8 0a8 8 0 1 0 16 0a8 8 0 1 0-16 0M12 8v4l2.5 2', ruins: 'M3 21h18M5 21V11h3v10M10 21V8h4v13M16 21V13h3v8M4 8l3-3M14 5l4 3',
+    museum: 'M4 10h16L12 4zM6 10v8M10 10v8M14 10v8M18 10v8M3 21h18', market: 'M4 9l1-5h14l1 5M4 9h16v11H4zM4 9c0 2 3.5 2 4 0 .5 2 3.5 2 4 0 .5 2 3.5 2 4 0 .5 2 4 2 4 0',
+    nightlife: 'M8 3h8l-4 7zM12 10v9M8 21h8', hot_springs: 'M4 18c3 2 13 2 16 0M8 14c0-2 1-2 1-4s-1-2-1-4M12 14c0-2 1-2 1-4s-1-2-1-4M16 14c0-2 1-2 1-4s-1-2-1-4',
+    stay: 'M3 18V8M3 14h18v4M21 14c0-2-1-4-4-4H9v4M6 12a1.5 1.5 0 1 0 0-.1', festival: 'M4 21L9 7l8 8zM14 4c1 1 1 2 0 3M18 6c1 .5 2 .5 3 0M17 2v2',
+    drive: 'M12 12m-8.5 0a8.5 8.5 0 1 0 17 0a8.5 8.5 0 1 0-17 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M3.8 10.5h6.3M13.9 10.5h6.3M12 14v6.3',
+    boat: 'M3 16l2 4h14l2-4zM6 16V9h12v7M12 9V4M12 4l4 3', train: 'M6 3h12a1 1 0 0 1 1 1v11a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V4a1 1 0 0 1 1-1zM5 10h14M8 21l2-3M16 21l-2-3',
+    flight: 'M3 13l7-2 4-7h2l-2 7 5 1 1-2h2l-1 4 1 4h-2l-1-2-5 1 2 7h-2l-4-7-7-2z', time: 'M12 12m-8 0a8 8 0 1 0 16 0a8 8 0 1 0-16 0M12 8v4l2.5 2',
+    other: 'M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0'
+  };
+  const hlIcon = (k, size) => '<svg viewBox="0 0 24 24" width="' + (size || 20) + '" height="' + (size || 20) + '" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + (HL_ICONS[k] || HL_ICONS.other) + '"/></svg>';
+
+  /* Mapbox GL JS, loaded the first time a route map is shown (it's ~2 MB). Tests set SUITCASE_MAP_FAKE to skip it. */
+  let glReady = null;
+  function loadGL() {
+    if (window.SUITCASE_MAP_FAKE) return Promise.reject(new Error('fake'));
+    if (!glReady) glReady = new Promise((res, rej) => {
+      const css = h('link', { rel: 'stylesheet', href: 'lib/mapbox-gl-3.35.2.css' });
+      const js = h('script', { src: 'lib/mapbox-gl-3.35.2.js' });
+      js.onload = () => (window.mapboxgl ? res(window.mapboxgl) : rej(new Error('no mapboxgl')));
+      js.onerror = () => { glReady = null; rej(new Error('Mapbox didn\'t load')); };
+      document.head.append(css, js);
+    });
+    return glReady;
+  }
+
   function newTripModal() {
-    const st = { dest: '', picks: [], mode: null, unit: null, months: 1, start: '', len: 21, step: 1, how: null, howOpen: false,
-      loves: [], pace: 'Mixed', busy: false, draft: null, layout: null, stops: [] };
+    const st = { step: 'where', dest: '', picks: [], mode: null, unit: null, months: 1, start: '', end: '', cal: null,
+      ans: { added: [] }, open: null, busy: false, routes: null, cur: 0, imp: { text: '', file: null, plan: null, msg: null } };
     modal((box, close) => {
       box.classList.add('newtrip');
-      const err = h('div', { class: 'notice warn hidden' });
+      const err = h('div', { class: 'notice warn hidden', role: 'alert' });
       const showErr = m => { err.textContent = m; err.classList.remove('hidden'); };
-      const lengthOf = () => st.mode === 'exact' ? st.len : st.unit === 'month' ? st.months * 30 : (ROUGH.find(r => r[0] === st.unit) || [0, 0, 0])[2];
-      const datesOk = () => st.mode === 'exact' ? !!st.start : !!st.unit;
+      const hideErr = () => err.classList.add('hidden');
+      const lengthOf = () => st.mode === 'exact' ? (st.start && st.end ? NT.daysIncl(st.start, st.end) : 0)
+        : st.unit === 'month' ? st.months * 30 : (ROUGH.find(r => r[0] === st.unit) || [0, 0, 0])[2];
+      const unitLabel = () => st.mode === 'exact' ? null : st.unit === 'month' ? plural(st.months, 'month') : (ROUGH.find(r => r[0] === st.unit) || [])[1];
+      const datesOk = () => st.mode === 'exact' ? !!(st.start && st.end) : !!st.unit;
       const destOk = () => !!st.dest.trim();
+      const destName = () => st.dest.split(',').map(x => x.trim()).filter(Boolean).join(', ');
 
-      /* where you're going: several places, comma-separated; suggestions complete the one being typed */
+      /* ── frame: label, body (scrolls), footer (pinned) ── */
+      const lbl = h('span', { class: 'nt-lbl' });
+      const body = h('div', { class: 'nt-body' });
+      const foot = h('div', { class: 'nt-foot' });
+      const x = h('button', { type: 'button', class: 'nt-x', 'aria-label': 'Close', onclick: () => close() }, '×');
+      const setFoot = (left, right) => foot.replaceChildren(h('div', { class: 'nt-fl' }, left), h('div', { class: 'nt-fr' }, right));
+
+      /* ── step 1: where (static, so the cursor survives redraws) ── */
       const dest = h('input', { class: 'input big-name dest-in', placeholder: 'Cities, countries or regions', maxlength: 200, autocomplete: 'off',
         role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-label': 'Where are you going?' });
       const acList = h('div', { class: 'ac hidden', role: 'listbox' });
@@ -282,7 +322,7 @@
         items = []; paintAc(); draw();
       }
       dest.addEventListener('input', () => {
-        st.dest = dest.value; syncPicks(); err.classList.add('hidden'); draw();
+        st.dest = dest.value; syncPicks(); hideErr(); drawFoot1();
         clearTimeout(timer); const my = ++seq;
         timer = setTimeout(async () => { const r = await PLACES.suggest(lastPart()); if (my !== seq) return; items = r; acI = 0; paintAc(); }, 250);
       });
@@ -295,14 +335,68 @@
       });
       dest.addEventListener('focus', () => { focused = true; paintAc(); });
       dest.addEventListener('blur', () => setTimeout(() => { focused = false; paintAc(); }, 150));
+      const where = h('div', { class: 'nt-where' }, h('div', { class: 'nt-ttl' }, 'Where are you going?'), h('span', { class: 'ac-wrap' }, dest, acList));
+      const datesBox = h('div', { class: 'nt-dates' });
 
-      const body = h('div');
       const stepper = (label, onMinus, onPlus, minusOff, plusOff) => h('span', { class: 'stepper' },
         h('button', { type: 'button', 'aria-label': 'Less', disabled: minusOff, onclick: e => { e.stopPropagation(); onMinus(); } }, '–'),
         h('strong', null, label), h('button', { type: 'button', 'aria-label': 'More', disabled: plusOff, onclick: e => { e.stopPropagation(); onPlus(); } }, '+'));
       const seg = (key, label) => h('button', { type: 'button', class: 'seg-btn' + (st.mode === key ? ' on' : ''), 'aria-pressed': String(st.mode === key),
-        onclick: () => { st.mode = key; draw(); if (key === 'exact') { const d = body.querySelector('input[type=date]'); if (d) d.focus(); } } }, label);
+        onclick: () => { st.mode = key; if (key === 'exact' && !st.start) st.cal = { pickEnd: false, hover: null, month: null }; draw(); } }, label);
 
+      /* the range calendar: first tap = first day, second tap = last day */
+      const fmtD = v => v ? new Date(v + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
+      function rangePart() {
+        const c = st.cal, pickEnd = !!(c && c.pickEnd);
+        const endV = pickEnd ? (c.hover && c.hover >= st.start ? c.hover : null) : st.end;
+        const n = st.start && endV ? NT.daysIncl(st.start, endV) : 0;
+        const btn = h('button', { type: 'button', class: 'rp-btn', 'aria-expanded': String(!!c), 'aria-haspopup': 'dialog',
+          onclick: () => { st.cal = st.cal ? null : { pickEnd: false, hover: null, month: null }; draw(); } },
+          svg('<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>'),
+          h('span', { class: 'rp-v' + (c && !pickEnd ? ' act' : '') + (st.start ? '' : ' none') }, h('small', null, 'Start'), st.start ? fmtD(st.start) : 'Add date'),
+          h('span', { class: 'rp-arr', 'aria-hidden': 'true' }, '→'),
+          h('span', { class: 'rp-v rp-end' + (pickEnd ? ' act' : '') + (endV ? '' : ' none') }, h('small', null, 'End'), h('span', null, endV ? fmtD(endV) : pickEnd ? 'Pick a day' : 'Add date')),
+          h('span', { class: 'rp-len' }, n ? plural(n, 'day') : ''));
+        if (!c) return h('div', { class: 'rp' }, btn);
+        const base = c.month || (st.start || todayIso()).slice(0, 7);
+        const [by, bm] = base.split('-').map(Number);
+        const today = todayIso();
+        const months = [0, 1].map(o => {
+          const y = by + Math.floor((bm - 1 + o) / 12), m = (bm - 1 + o) % 12;
+          const cells = NT.monthGrid(y, m).map(v => {
+            if (!v) return h('span', { class: 'rp-x' });
+            const off = v < today || (pickEnd && v < st.start);
+            const isS = v === st.start, isE = !!endV && v === endV, inR = !!(st.start && endV && v > st.start && v < endV);
+            return h('button', { type: 'button', class: 'rp-d' + (isS ? ' s' : '') + (isE ? ' e' : '') + (inR ? ' in' : '') + (isS && endV && endV > st.start ? ' ss' : '') + (isE && endV > st.start ? ' ee' : ''),
+              disabled: off, 'aria-label': fmtD(v), 'aria-pressed': String(isS || isE),
+              'data-v': v, onmouseenter: () => { if (st.cal && st.cal.pickEnd) hoverEnd(v); },
+              onclick: () => {
+                if (!pickEnd) { st.start = v; st.end = ''; c.pickEnd = true; c.hover = v; }
+                else { st.end = v; st.cal = null; }
+                hideErr(); draw();
+                const again = body.querySelector(st.cal ? '.rp-d[data-v="' + v + '"]' : '.rp-btn'); if (again) again.focus();
+              } }, String(+v.slice(8)));
+          });
+          return h('div', { class: 'rp-m' }, h('div', { class: 'rp-mt' }, new Date(Date.UTC(y, m, 1)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })),
+            h('div', { class: 'rp-g' }, ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(d => h('span', { class: 'rp-dw', 'aria-hidden': 'true' }, d)), cells));
+        });
+        const shift = k => () => { const t = new Date(Date.UTC(by, bm - 1 + k, 1)); c.month = t.toISOString().slice(0, 7); draw(); };
+        return h('div', { class: 'rp' }, btn, h('div', { class: 'rp-pop', role: 'dialog', 'aria-label': 'Pick your dates' },
+          h('div', { class: 'rp-hd' }, h('button', { type: 'button', class: 'rp-nav', 'aria-label': 'Previous month', onclick: shift(-1) }, '‹'),
+            h('span', { class: 'muted' }, pickEnd ? 'Now pick your last day' : 'Pick your first day'),
+            h('button', { type: 'button', class: 'rp-nav', 'aria-label': 'Next month', onclick: shift(1) }, '›')),
+          h('div', { class: 'rp-ms' }, months)));
+      }
+      /* While picking the last day, hovering only restyles the days and the End label (no redraw, so clicks land). */
+      function hoverEnd(v) {
+        const c = st.cal; c.hover = v; const endV = v >= st.start ? v : null;
+        body.querySelectorAll('.rp-d[data-v]').forEach(b => { const d = b.dataset.v;
+          b.classList.toggle('e', !!endV && d === endV); b.classList.toggle('ee', !!endV && d === endV && endV > st.start);
+          b.classList.toggle('in', !!endV && d > st.start && d < endV); b.classList.toggle('ss', d === st.start && !!endV && endV > st.start); });
+        const ev = body.querySelector('.rp-end'), len = body.querySelector('.rp-len');
+        if (ev) { ev.lastChild.textContent = endV ? fmtD(endV) : 'Pick a day'; ev.classList.toggle('none', !endV); }
+        if (len) len.textContent = endV ? plural(NT.daysIncl(st.start, endV), 'day') : '';
+      }
       function datesPart() {
         let inner = null;
         if (st.mode === 'rough') {
@@ -313,123 +407,302 @@
               ? h('span', { class: 'len-pill on months' }, stepper(plural(st.months, 'month'),
                   () => { st.months = Math.max(1, st.months - 1); draw(); }, () => { st.months = Math.min(24, st.months + 1); draw(); }, st.months <= 1, st.months >= 24))
               : h('button', { type: 'button', class: 'len-pill', 'aria-pressed': 'false', onclick: () => { st.unit = 'month'; draw(); } }, 'Months'));
-        } else if (st.mode === 'exact') {
-          const back = h('div', { class: 'back-on' });
-          const backText = () => st.start ? 'Back on ' + new Date(Date.UTC(...st.start.split('-').map((v, i) => i === 1 ? v - 1 : +v)) + (st.len - 1) * 864e5)
-            .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
-          const date = h('input', { class: 'input', type: 'date', value: st.start, 'aria-label': 'Start date',
-            oninput: e => { const had = !!st.start; st.start = e.target.value; back.textContent = backText(); err.classList.add('hidden'); if (had !== !!st.start) draw(); } });
-          back.textContent = backText();
-          inner = h('div', null, h('div', { class: 'exact-row' }, h('span', null, 'Starting'), date, h('span', null, 'for'),
-            stepper(plural(st.len, 'day'), () => { st.len = Math.max(1, st.len - 1); draw(); }, () => { st.len = Math.min(MAX_DAYS, st.len + 1); draw(); }, st.len <= 1, st.len >= MAX_DAYS)), back);
-        }
+        } else if (st.mode === 'exact') inner = rangePart();
         return [h('div', { class: 'q' }, 'Do you know your dates yet?'), h('div', { class: 'seg' }, seg('rough', 'Not yet'), seg('exact', 'Yes, I do')), inner];
       }
+      function drawFoot1() {
+        const ready = destOk() && datesOk();
+        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => go('import') }, 'Copy / import an existing plan'),
+          [h('span', { class: 'muted' }, !destOk() ? 'Add where you\'re going.' : !datesOk() ? (st.mode === 'exact' ? 'Pick your first and last day.' : 'Answer the dates question.') : ''),
+            h('button', { type: 'button', class: 'btn primary', disabled: !ready, onclick: () => go('sentence') }, 'Next →')]);
+      }
 
-      function howPart() {
-        const row = (x, extra) => h('button', { type: 'button', class: 'how-row' + (x[3] ? '' : ' off') + (extra || ''), disabled: !x[3],
-          'aria-pressed': String(st.how === x[0]), onclick: () => { st.how = x[0]; st.howOpen = false; draw(); } },
-          h('span', { class: 'how-t' }, h('strong', null, x[1]), h('span', { class: 'muted' }, x[2])),
-          x[3] ? h('span', { class: 'how-go', 'aria-hidden': 'true' }, '›') : h('span', { class: 'soon-tag' }, 'Soon'));
-        let pick;
-        if (!st.how || st.howOpen) pick = h('div', { class: 'how-list' }, HOWS.map(x => row(x, st.how === x[0] ? ' on' : '')));
-        else {
-          const cur = HOWS.find(x => x[0] === st.how);
-          pick = h('button', { type: 'button', class: 'how-row on dd', 'aria-haspopup': 'true', 'aria-expanded': 'false', onclick: () => { st.howOpen = true; draw(); } },
-            h('span', { class: 'how-t' }, h('strong', null, cur[1]), h('span', { class: 'muted' }, cur[2])), h('span', { class: 'how-go', 'aria-hidden': 'true' }, '⌄'));
+      /* ── step 2: finish the sentence ── */
+      const ctx = () => ({ dest: destName(), days: lengthOf(), start: st.mode === 'exact' ? st.start : null, exactDates: st.mode === 'exact',
+        lengthText: st.mode === 'exact' ? NT.lengthText(lengthOf(), null) : NT.lengthText(lengthOf(), unitLabel()),
+        places: st.picks.filter(p => p.kind === 'place').map(p => p.name) });
+      function setAns(id, v, keepOpen) { st.ans[id] = v; if (!keepOpen) st.open = null; draw(); }
+      function sentencePart() {
+        const c = ctx(), a = st.ans;
+        const toks = NT.tokens(a, c).map(t => {
+          if (t.text) return h('span', null, t.text);
+          const id = t.blank, def = NT.BLANKS[id], open = st.open === id, multi = !!def.multi;
+          const cur = a[id], list = multi ? (cur || []) : [];
+          const blank = h('button', { type: 'button', class: 'blank' + (t.filled ? '' : ' unset') + (open ? ' open' : ''), 'aria-expanded': String(open),
+            'aria-label': def.q + (t.filled ? ': ' + t.label : ''), onclick: () => { st.open = open ? null : id; draw(); } }, t.label);
+          if (!open) return blank;
+          const opts = NT.optionsFor(id, c);
+          (multi ? list : (cur ? [cur] : [])).forEach(v => { if (opts.indexOf(v) < 0) opts.push(v); });
+          const pick = v => {
+            if (multi) setAns(id, list.indexOf(v) >= 0 ? list.filter(z => z !== v) : list.concat([v]), true);
+            else setAns(id, cur === v ? null : v, cur === v);
+          };
+          const own = h('input', { class: 'own', placeholder: 'Type your own…', 'aria-label': 'Type your own: ' + def.q, maxlength: 80,
+            onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); const v = own.value.trim(); if (v && !(multi ? list.indexOf(v) >= 0 : cur === v)) pick(v); else if (!v && multi) { st.open = null; draw(); } }
+              if (e.key === 'Escape') { e.stopPropagation(); st.open = null; draw(); } } });
+          const pills = h('span', { class: 'inl', role: 'group', 'aria-label': def.q },
+            opts.map(v => { const on = multi ? list.indexOf(v) >= 0 : cur === v;
+              return h('button', { type: 'button', class: 'io' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => pick(v) }, v); }),
+            own,
+            multi ? h('button', { type: 'button', class: 'okc', 'aria-label': 'Done', title: 'Done', onclick: () => { st.open = null; draw(); } },
+              svg('<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>')) : null);
+          setTimeout(() => { if (!opts.length || document.activeElement === document.body) own.focus(); }, 0);
+          return (multi || !t.filled) ? pills : [blank, ' ', pills];
+        });
+        const extras = NT.extrasFor(c, a.added || []);
+        return [h('div', { class: 'nt-ttl' }, 'Tell us about the trip'), h('p', { class: 'sent' }, toks),
+          extras.length ? h('div', { class: 'tray' }, h('div', { class: 'q' }, 'Add more detail ', h('span', { class: 'muted' }, '(optional)')),
+            h('div', { class: 'len-pills' }, extras.map(e => h('button', { type: 'button', class: 'addc', onclick: () => { st.ans.added = (st.ans.added || []).concat([e[0]]); st.open = e[0]; draw(); } }, '+ ' + e[1])))) : null];
+      }
+      function drawFoot2() {
+        const miss = NT.missing(st.ans);
+        setFoot([h('button', { type: 'button', class: 'btn', onclick: () => go('where') }, '‹ Back'),
+          h('button', { type: 'button', class: 'link-btn empty-start', onclick: () => createTrip({ empty: true }) }, 'Or start with an empty trip')],
+          [h('span', { class: 'muted' }, miss.length ? plural(miss.length, 'blank') + ' left' : 'Next: three routes to compare.'),
+            h('button', { type: 'button', class: 'btn primary', disabled: miss.length > 0, onclick: buildRoutes }, 'See my options →')]);
+      }
+
+      /* ── step 3: three routes ── */
+      async function buildRoutes() {
+        hideErr(); st.busy = true; st.open = null; draw();
+        const ask = NT.request(st.ans, ctx());
+        const { data, error } = await sb.functions.invoke('draft-trip', { body: ask });
+        if (!error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes.length) {
+          try { await prepareRoutes(data.draft); st.busy = false; st.cur = 0; go('routes'); return; }
+          catch (e) { console.warn(e); }
         }
-        const out = [h('div', { class: 'q' }, 'How do you want to start?'), pick];
-        if (st.how === 'inspire' && !st.howOpen) {
-          const chip = (label, on, fn) => h('button', { type: 'button', class: 'len-pill' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: fn }, label);
-          out.push(h('div', { class: 'q sub' }, 'What do you love? ', h('span', { class: 'muted' }, 'Pick any')),
-            h('div', { class: 'len-pills' }, LOVES.map(l => chip(l, st.loves.indexOf(l) >= 0, () => {
-              st.loves = st.loves.indexOf(l) >= 0 ? st.loves.filter(x => x !== l) : st.loves.concat([l]); draw(); }))),
-            h('div', { class: 'q sub' }, 'Pace?'),
-            h('div', { class: 'len-pills' }, PACES.map(pc => chip(pc, st.pace === pc, () => { st.pace = pc; draw(); }))));
-        }
-        const ready = st.how === 'inspire' && st.loves.length > 0;
-        out.push(h('div', { class: 'actions start' },
-          h('button', { type: 'button', class: 'btn primary', disabled: !ready, onclick: buildDraft }, 'Build my draft →'),
-          h('span', { class: 'muted' }, ready ? 'Takes about 10 seconds.' : !st.how ? 'Pick how you want to start.' : 'Pick at least one thing you love.')),
-          h('button', { type: 'button', class: 'link-btn empty-start', onclick: () => createTrip(null) }, 'Or start with an empty trip'));
+        st.busy = false; go('sentence');
+        let m = 'Couldn\'t make routes just now. Try again, or start with an empty trip.';
+        try { const j = error && error.context && await error.context.json(); if (j && j.error) m = j.error; } catch (e) { /* keep the plain message */ }
+        showErr(m);
+      }
+      async function prepareRoutes(draft) {
+        const total = lengthOf();
+        const want = {};
+        draft.routes.forEach(r => r.phases.forEach(p => (p.stops || []).forEach(s => { s.place = String(s.place || '').trim(); want[s.place + '|' + (s.country || '')] = s; })));
+        const keys = Object.keys(want).slice(0, 40);
+        const found = await Promise.all(keys.map(k => PLACES.lookup(want[k].place, want[k].country)));
+        const at = {}; keys.forEach((k, i) => { if (found[i]) at[k] = found[i]; });
+        st.draft = draft;
+        st.routes = draft.routes.map(r => {
+          NT.fitNights(r.phases, total);
+          const L = LAYOUT.fromDraft(r.phases, total).layout;
+          const stops = [];
+          r.phases.forEach((p, pi) => (p.stops || []).forEach(s => {
+            const f = at[s.place + '|' + (s.country || '')] || {};
+            const lp = L.phases[pi] || L.phases[L.phases.length - 1];
+            stops.push({ place: s.place, n: s.nights, why: s.why, next: s.next || null, colour: lp ? lp.colour : '#3F5675', phase: lp ? lp.id : null,
+              lat: f.lat, lng: f.lng, country: f.country || s.country, label: f.label });
+          }));
+          return { r, layout: L, stops };
+        });
+      }
+      function routesPart() {
+        const R = st.routes, cur = R[st.cur];
+        const cards = R.map((x, k) => {
+          const on = k === st.cur, r = x.r;
+          return h('div', { class: 'ro' + (on ? ' on' : ''), role: 'button', tabindex: '0', 'aria-pressed': String(on),
+            onclick: () => { if (!on) { st.cur = k; draw(); } }, onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); st.cur = k; draw(); } } },
+            h('span', { class: 'ro-top' }, h('strong', { class: 'ro-nm' }, NT.tidy(r.name)), r.tag ? h('span', { class: 'ro-tag' }, NT.tidy(r.tag)) : null),
+            h('span', { class: 'ro-pitch' }, NT.tidy(r.pitch)),
+            on ? h('span', { class: 'ro-more' },
+              (r.best_for || []).length ? h('span', { class: 'ro-best' }, 'Best for: ' + r.best_for.map(NT.tidy).join(', ')) : null,
+              h('span', { class: 'ro-hl' }, (r.highlights || []).map(hl => h('span', { class: 'hr' + (hl.skip ? ' minus' : '') }, svg(hlIcon(hl.kind)),
+                h('span', null, NT.tidy(hl.text), hl.because && !hl.skip ? h('span', { class: 'by' }, NT.tidy(hl.because)) : null)))),
+              h('span', { class: 'ro-stops muted' }, x.stops.map(s => s.place).join(' → ') + ' · ' + plural(x.stops.reduce((a, s) => a + s.n, 0), 'night')),
+              h('button', { type: 'button', class: 'btn primary go', onclick: e => { e.stopPropagation(); createTrip({ route: x }); } }, 'Customize this plan →')) : null);
+        });
+        const tl = h('div', { class: 'tl small mtl' }, cur.layout.phases.map(p => h('div', { class: 'tl-ph on', style: { flex: p.days.length, background: p.colour } },
+          h('b', null, p.name || ''), h('span', null, plural(p.days.length, 'day')))));
+        return [h('div', { class: 'rhdr' }, h('div', { class: 'nt-ttl' }, 'Three ways through ' + destName()), st.draft.description ? h('p', { class: 'lead' }, NT.tidy(st.draft.description)) : null),
+          h('div', { class: 'rgrid' }, h('div', { class: 'rmap' }, tl, mapBox), h('div', { class: 'ropts' }, cards))];
+      }
+
+      /* the route map: one Mapbox GL map, redrawn for the picked route */
+      const mapBox = h('div', { class: 'rmap-box' });
+      let gl = null, glMarks = [], glFailed = false;
+      const legend = () => h('div', { class: 'legend' }, h('span', { class: 'lg' }, h('i'), 'Bus / drive'), h('span', { class: 'lg' }, h('i', { class: 'fly' }), 'Flight'),
+        h('span', { class: 'lg' }, h('span', { class: 'bdg dk' }), 'In all three'), h('span', { class: 'lg' }, h('span', { class: 'bdg' }), 'This route only'));
+      function mapData(x) {
+        const pts = x.stops.filter(s => s.lat != null);
+        const legs = [];
+        x.stops.forEach((s, i) => { const t = x.stops[i + 1]; if (t && s.lat != null && t.lat != null) legs.push({ type: 'Feature', properties: { fly: s.next === 'fly' }, geometry: { type: 'LineString', coordinates: [[s.lng, s.lat], [t.lng, t.lat]] } }); });
+        const pins = pts.map((s, i) => ({ type: 'Feature', properties: { c: s.colour, end: i === 0 || i === pts.length - 1 }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
+        return { pts, legs: { type: 'FeatureCollection', features: legs }, pins: { type: 'FeatureCollection', features: pins } };
+      }
+      function badgesFor(x) {
+        const by = {}; x.stops.forEach(s => { if (s.lat != null) by[s.place.toLowerCase()] = s; });
+        const out = [];
+        (x.r.highlights || []).filter(hl => !hl.skip && hl.place && by[hl.place.toLowerCase()]).forEach(hl => out.push({ s: by[hl.place.toLowerCase()], kind: hl.kind, dark: false, text: hl.text }));
+        (st.draft.shared || []).filter(hl => hl.place && by[hl.place.toLowerCase()]).forEach(hl => out.push({ s: by[hl.place.toLowerCase()], kind: hl.kind, dark: true, text: hl.text }));
         return out;
       }
-
-      // The destination input stays in place (moving it would lose the cursor); only the part below is redrawn.
-      const top = h('div', null, h('div', { class: 'q' }, 'Where are you going?'), h('span', { class: 'ac-wrap' }, dest, acList), h('div', { class: 'gap' }));
-      function draw() {
-        if (st.busy || st.draft) return;
-        top.classList.remove('hidden');
-        const parts = datesPart();
-        if (st.step === 1) parts.push(h('div', { class: 'actions start' },
-          h('button', { type: 'button', class: 'btn primary', disabled: !(destOk() && datesOk()), onclick: () => { st.step = 2; draw(); } }, 'Next →'),
-          h('span', { class: 'muted' }, !destOk() ? 'Add where you\'re going.' : !datesOk() ? 'Answer the dates question.' : '')));
-        else { parts.push(h('div', { class: 'step2' + (st.shown ? '' : ' reveal') }, howPart())); st.shown = true; }
-        body.replaceChildren(...parts);
-        if (st.step === 2 && (!destOk() || !datesOk())) { st.step = 1; draw(); }
+      let glInit = null;
+      function initMap(d) {
+        mapBox.replaceChildren(h('div', { class: 'rmap-gl' }), legend());
+        return loadGL().then(mb => new Promise((res, rej) => {
+          mb.accessToken = CFG.mapboxToken;
+          const m = new mb.Map({ container: mapBox.firstChild, style: 'mapbox://styles/mapbox/light-v11', bounds: boundsOf(d.pts), fitBoundsOptions: { padding: 60 },
+            dragRotate: false, pitchWithRotate: false });
+          m.addControl(new mb.NavigationControl({ showCompass: false }), 'bottom-right');
+          m.on('error', e => { if (!m.loaded()) rej(e.error || new Error('map error')); });
+          m.on('load', () => {
+            m.addSource('legs', { type: 'geojson', data: d.legs }); m.addSource('pins', { type: 'geojson', data: d.pins });
+            m.addLayer({ id: 'legs', type: 'line', source: 'legs', filter: ['!', ['get', 'fly']], paint: { 'line-color': '#3F5675', 'line-width': 3 }, layout: { 'line-cap': 'round' } });
+            m.addLayer({ id: 'legs-fly', type: 'line', source: 'legs', filter: ['get', 'fly'], paint: { 'line-color': '#3F5675', 'line-width': 2.5, 'line-dasharray': [2, 2] } });
+            m.addLayer({ id: 'pin-ring', type: 'circle', source: 'pins', filter: ['get', 'end'], paint: { 'circle-radius': 13, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#222', 'circle-stroke-width': 2 } });
+            m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': ['case', ['get', 'end'], 8, 6], 'circle-color': ['get', 'c'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 } });
+            gl = m; res(m);
+          });
+        })).catch(e => { glFailed = true; if (!/fake/.test(e.message || '')) console.warn('map', e); });
       }
-
-      /* Inspire me → draft-trip function → places looked up → "At a glance" */
-      async function buildDraft() {
-        err.classList.add('hidden'); st.busy = true; top.classList.add('hidden');
-        body.replaceChildren(h('div', { class: 'busy' }, h('div', { class: 'spinner', 'aria-hidden': 'true' }),
-          h('strong', null, 'Building your draft…'), h('span', { class: 'muted' }, 'Picking places for ' + st.dest.trim() + ', ' + plural(lengthOf(), 'day') + '.')));
-        const { data, error } = await sb.functions.invoke('draft-trip', { body: {
-          destination: st.dest.trim(), days: lengthOf(), start: st.mode === 'exact' ? st.start : null, loves: st.loves, pace: st.pace } });
-        st.busy = false;
-        if (error || !data || !data.draft) {
-          let m = 'Couldn\'t build a draft just now. Try again, or start with an empty trip.';
-          try { const j = error && error.context && await error.context.json(); if (j && j.error) m = j.error; } catch (e) { /* keep the plain message */ }
-          draw(); showErr(m); return;
+      async function paintMap() {
+        const x = st.routes[st.cur], d = mapData(x);
+        if (!glFailed && !glInit) glInit = initMap(d);
+        if (!glFailed) await glInit;
+        if (st.step !== 'routes' || x !== st.routes[st.cur]) return;   // moved on while the map loaded
+        if (glFailed) {   // fall back to a still image
+          const url = PLACES.staticMap(x.stops, 520, 520);
+          mapBox.replaceChildren(url ? h('img', { class: 'rmap-img', src: url, alt: 'Map of ' + x.r.name, width: 520, height: 520 }) : h('div', { class: 'rmap-img empty' }), legend());
+          return;
         }
-        const r = LAYOUT.fromDraft(data.draft.phases, lengthOf());
-        if (!r.layout.phases.length) { draw(); showErr('The draft came back empty. Try again.'); return; }
-        // Find each stop on the map (in parallel), for pins and phase country names later.
-        const why = {};
-        data.draft.phases.forEach(ph => (ph.stops || []).forEach(s => { why[String(s.place).trim()] = { why: s.why, country: s.country }; }));
-        const stops = [];
-        r.layout.phases.forEach(p => LAYOUT.stopsOf(p).forEach(s => stops.push({ place: s.place, n: s.n, colour: p.colour, phase: p.id, why: (why[s.place] || {}).why })));
-        const found = await Promise.all(stops.map(s => PLACES.lookup(s.place, (why[s.place] || {}).country)));
-        stops.forEach((s, k) => { const f = found[k]; if (f) { s.lat = f.lat; s.lng = f.lng; s.country = f.country; s.label = f.label; } });
-        st.draft = data.draft; st.layout = r.layout; st.stops = stops; st.shortened = r.shortened;
-        glance();
-      }
-
-      function glance() {
-        box.classList.add('wide'); top.classList.add('hidden');
-        const L = st.layout, total = LAYOUT.total(L);
-        const bar = h('div', { class: 'tl small' }, L.phases.map(p => h('div', { class: 'tl-ph on', style: { flex: p.days.length, background: p.colour } },
-          h('b', null, p.name || ''), h('span', null, plural(p.days.length, 'day')))),
-          L.free.length ? h('div', { class: 'tl-free', style: { flex: L.free.length } }, plural(L.free.length, 'day') + ' to plan') : null);
-        const list = h('div', { class: 'glance-list' });
-        L.phases.forEach(p => {
-          list.append(h('div', { class: 'g-ph' }, h('i', { class: 'pc-sw', style: { background: p.colour } }), h('strong', null, p.name || 'Phase'), h('span', { class: 'muted' }, plural(p.days.length, 'day'))));
-          st.stops.filter(s => s.phase === p.id).forEach(s => list.append(h('div', { class: 'g-stop' },
-            h('span', { class: 'f-ico' }, svg(PIN(p.colour))),
-            h('div', null, h('div', null, h('strong', null, s.place), h('span', { class: 'muted' }, ' · ' + plural(s.n, 'night'))), s.why ? h('div', { class: 'muted g-why' }, s.why) : null))));
+        gl.resize(); gl.getSource('legs').setData(d.legs); gl.getSource('pins').setData(d.pins);
+        glMarks.forEach(m => m.remove()); glMarks = [];
+        const mb = window.mapboxgl;
+        d.pts.forEach((s, i) => {
+          const end = i === 0 || i === d.pts.length - 1;
+          const el = h('span', { class: 'plab' + (end ? ' se' : '') }, (i === 0 ? 'Start · ' : i === d.pts.length - 1 ? 'End · ' : '') + s.place);
+          glMarks.push(new mb.Marker({ element: el, anchor: 'left', offset: [end ? 16 : 11, 0] }).setLngLat([s.lng, s.lat]).addTo(gl));
         });
-        const mapUrl = PLACES.staticMap(st.stops, 560, 300);
-        body.replaceChildren(
-          h('div', { class: 'glance' },
-            h('div', { class: 'q' }, 'At a glance'),
-            h('h3', { class: 'g-title' }, st.dest.trim()),
-            h('p', { class: 'g-desc' }, st.draft.description || ''),
-            bar,
-            h('div', { class: 'g-cols' }, list, mapUrl ? h('img', { class: 'g-map', src: mapUrl, alt: 'Map of the drafted route', width: 560, height: 300 }) : null),
-            st.shortened ? h('div', { class: 'notice' }, 'The draft was longer than ' + plural(total, 'day') + ', so the last stops were shortened.') : null,
-            h('div', { class: 'actions start' },
-              h('button', { type: 'button', class: 'btn primary', onclick: () => createTrip(st.layout) }, 'Looks good · start planning from this draft'),
-              h('button', { type: 'button', class: 'btn', onclick: () => { st.draft = null; st.layout = null; box.classList.remove('wide'); draw(); } }, 'Try a different start'))));
+        const seen = {};
+        badgesFor(x).forEach(b => {
+          const k = b.s.place; const n = seen[k] = (seen[k] || 0) + 1;
+          const el = h('span', { class: 'mbdg' + (b.dark ? ' dk' : ''), title: b.text, html: hlIcon(b.kind, 16) });
+          glMarks.push(new mb.Marker({ element: el, anchor: 'bottom', offset: [(n - 1) * 30 - 8, -14] }).setLngLat([b.s.lng, b.s.lat]).addTo(gl));
+        });
+        if (d.pts.length) gl.fitBounds(boundsOf(d.pts), { padding: { top: 50, bottom: 50, left: 50, right: 130 }, duration: 700, maxZoom: 8 });
+      }
+      const boundsOf = pts => {
+        if (!pts.length) return [[-180, -60], [180, 75]];
+        let a = [180, 90], b = [-180, -90];
+        pts.forEach(p => { a = [Math.min(a[0], p.lng), Math.min(a[1], p.lat)]; b = [Math.max(b[0], p.lng), Math.max(b[1], p.lat)]; });
+        if (a[0] === b[0] && a[1] === b[1]) { a = [a[0] - 1, a[1] - 1]; b = [b[0] + 1, b[1] + 1]; }
+        return [a, b];
+      };
+      function drawFoot3() {
+        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => go('sentence') }, '‹ Back to your sentence'), null);
       }
 
-      /* Save: the trip, then (from a draft) its phases and days in one apply_layout, and the places found. */
-      async function createTrip(layout) {
-        err.classList.add('hidden');
+      /* ── import: pasted rows or a .csv / .xlsx file ── */
+      const fileIn = h('input', { type: 'file', accept: '.csv,.tsv,.txt,.xlsx,text/csv', style: { display: 'none' },
+        onchange: async () => { const f = fileIn.files[0]; fileIn.value = ''; if (f) await readFile(f); } });
+      async function readFile(f) {
+        const im = st.imp; im.msg = null; im.plan = null;
+        try {
+          let rows;
+          if (/\.xlsx$/i.test(f.name)) rows = await NT.readXlsx(await f.arrayBuffer(), inflate);
+          else if (/\.(csv|tsv|txt)$/i.test(f.name) || /text/.test(f.type)) rows = NT.parseDelimited(await f.text());
+          else { im.msg = 'Only .csv and .xlsx files for now. PDFs, Word files and links are coming soon.'; draw(); return; }
+          im.file = f.name; im.text = '';
+          await planFrom(rows);
+        } catch (e) { im.file = null; im.msg = e.message || 'Couldn\'t read that file.'; draw(); }
+      }
+      async function inflate(bytes) {
+        const ds = new DecompressionStream('deflate-raw');
+        const out = new Response(new Blob([bytes]).stream().pipeThrough(ds));
+        return new Uint8Array(await out.arrayBuffer());
+      }
+      let impTimer = null;
+      async function planFrom(rows) {
+        const im = st.imp, p = NT.planFromRows(rows);
+        if (p.error) { im.plan = null; im.msg = p.error; draw(); return; }
+        // No phase column: find the places and group them by country, like stops typed into the Planner.
+        if (!p.phases.some(ph => ph.name)) {
+          const all = []; p.phases.forEach(ph => ph.stops.forEach(s => all.push(s)));
+          const uniq = Array.from(new Set(all.map(s => s.place))).slice(0, 40);
+          im.msg = 'Finding ' + plural(uniq.length, 'place') + ' on the map…'; draw();
+          const found = await Promise.all(uniq.map(n => PLACES.lookup(n)));
+          const at = {}; uniq.forEach((n, i) => { if (found[i]) at[n] = found[i]; });
+          const phases = [];
+          all.forEach(s => {
+            const f = at[s.place]; if (f) Object.assign(s, { lat: f.lat, lng: f.lng, country: f.country, label: f.label });
+            const name = (f && f.country) || null, last = phases[phases.length - 1];
+            if (last && (last.name === name || !name)) last.stops.push(s); else phases.push({ name, stops: [s] });
+          });
+          p.phases = phases;
+        }
+        im.plan = p; im.msg = null; draw();
+      }
+      function importPart() {
+        const im = st.imp, p = im.plan;
+        const ta = h('textarea', { class: 'input imp-ta', placeholder: 'Paste rows from a spreadsheet, for example:\nLisbon\t3\nPorto\t2', 'aria-label': 'Your plan', value: im.text,
+          oninput: e => { im.text = e.target.value; im.file = null; clearTimeout(impTimer);
+            impTimer = setTimeout(() => {
+              const t = im.text.trim();
+              if (!t) { im.plan = null; im.msg = null; draw(); return; }
+              if (/^https?:\/\//i.test(t)) { im.plan = null; im.msg = 'Links are coming soon. For a Google Sheet, use File → Download → .csv and upload it here.'; draw(); return; }
+              planFrom(NT.parseDelimited(t));
+            }, 500); } });
+        const drop = h('button', { type: 'button', class: 'impdrop' + (im.file ? ' has' : ''), onclick: () => fileIn.click(),
+          ondragover: e => { e.preventDefault(); }, ondrop: e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); } },
+          svg('<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>'),
+          h('span', null, im.file ? im.file + ' · choose another' : 'Upload a spreadsheet · .csv or .xlsx'));
+        let preview = null;
+        if (p) {
+          const nStops = p.phases.reduce((a, ph) => a + ph.stops.length, 0);
+          preview = h('div', { class: 'imp-prev' },
+            h('strong', null, 'Found ' + plural(nStops, 'stop') + ' · ' + plural(p.days, 'day') + (p.start ? ' from ' + fmtD(p.start) : '')),
+            h('div', { class: 'imp-list' }, p.phases.map(ph => h('div', null, h('b', null, (ph.name || 'Phase') + ': '),
+              ph.stops.map(s => s.place + ' (' + s.nights + ')').join(', ')))));
+        }
+        return [h('div', { class: 'nt-ttl' }, 'Bring in a plan you already have'), ta, drop, fileIn,
+          h('p', { class: 'muted imp-help' }, 'Paste rows copied from a spreadsheet, or upload a .csv or .xlsx file. One row per stop with its nights, or one row per day: both work. A “Phase” or “Region” column keeps your own phases. Links, PDFs and Word files are coming soon.'),
+          im.msg ? h('div', { class: 'notice' }, im.msg) : null, preview];
+      }
+      function drawFoot4() {
+        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => go('where') }, '‹ Back'),
+          h('button', { type: 'button', class: 'btn primary', disabled: !st.imp.plan, onclick: () => createTrip({ plan: st.imp.plan }) }, 'Import plan →'));
+      }
+
+      /* ── drawing ── */
+      function go(step) { st.step = step; st.open = step === 'sentence' ? (NT.missing(st.ans)[0] || null) : null; hideErr(); body.scrollTop = 0; draw(); if (step === 'where') setTimeout(() => dest.focus(), 30); }
+      function draw() {
+        const big = st.step === 'routes' && !st.busy;
+        box.classList.toggle('big', big);
+        lbl.textContent = st.step === 'import' ? 'New trip · Import a plan' : 'New trip · ' + ({ where: 1, sentence: 2, routes: 3 }[st.step]) + ' of 3';
+        if (st.busy) {
+          body.replaceChildren(h('div', { class: 'busy' }, h('div', { class: 'spinner', 'aria-hidden': 'true' }), h('strong', null, 'Drawing up three routes…'),
+            h('span', { class: 'muted' }, destName() + ', ' + plural(lengthOf(), 'day') + '. This takes about 20 seconds.')));
+          foot.replaceChildren(); return;
+        }
+        if (st.step === 'where') {
+          datesBox.replaceChildren(...datesPart().filter(Boolean));
+          if (where.parentNode !== body || body.children.length !== 2) body.replaceChildren(where, datesBox);
+          if (st.cal) { const p = body.querySelector('.rp-pop'); if (p && p.scrollIntoView) p.scrollIntoView({ block: 'nearest' }); }
+          drawFoot1();
+        } else if (st.step === 'sentence') { body.replaceChildren(...sentencePart().filter(Boolean)); drawFoot2(); }
+        else if (st.step === 'routes') { body.replaceChildren(...routesPart().filter(Boolean)); drawFoot3(); paintMap(); }
+        else { const had = document.activeElement && document.activeElement.classList.contains('imp-ta'); const pos = had && document.activeElement.selectionStart;
+          body.replaceChildren(...importPart().filter(Boolean)); drawFoot4();
+          if (had) { const t = body.querySelector('.imp-ta'); t.focus(); t.setSelectionRange(pos, pos); } }
+      }
+
+      /* ── save: the trip, then its phases and days in one apply_layout, and the places found ── */
+      async function createTrip(o) {
+        hideErr();
         const btns = box.querySelectorAll('button'); btns.forEach(b => { b.disabled = true; });
-        const fail = m => { btns.forEach(b => { b.disabled = false; }); showErr(m); };
-        const fields = { name: st.dest.trim().slice(0, 80), start_date: st.mode === 'exact' ? st.start : null, length_days: lengthOf(), owner_id: session.user.id,
-          destination: st.dest.trim(), destination_places: st.picks.map(p => ({ name: p.name, kind: p.kind, country: p.country, cc: p.cc, lat: p.lat, lng: p.lng })) };
-        if (layout && st.draft && st.draft.description) fields.subtitle = String(st.draft.description).slice(0, 300);
+        const fail = m => { btns.forEach(b => { b.disabled = false; }); draw(); showErr(m); };
+        let layout = null, stops = [], name = destName(), start = st.mode === 'exact' ? st.start : null, days = lengthOf(), subtitle = null;
+        if (o.route) { layout = o.route.layout; stops = o.route.stops; subtitle = NT.tidy(o.route.r.pitch); }
+        if (o.plan) {
+          days = o.plan.days; start = o.plan.start || null;
+          layout = LAYOUT.fromDraft(o.plan.phases, days).layout;
+          o.plan.phases.forEach(ph => ph.stops.forEach(s => stops.push(s)));
+          if (!name) name = st.imp.file ? st.imp.file.replace(/\.[^.]+$/, '') : (o.plan.phases[0].name || o.plan.phases[0].stops[0].place);
+        }
+        const fields = { name: (name || 'New trip').slice(0, 80), start_date: start, length_days: days, owner_id: session.user.id,
+          destination: destName() || null, destination_places: st.picks.map(p => ({ name: p.name, kind: p.kind, country: p.country, cc: p.cc, lat: p.lat, lng: p.lng })) };
+        if (subtitle) fields.subtitle = subtitle.slice(0, 300);
         let { data, error } = await sb.from('trips').insert(fields).select().single();
         if (error && /destination/.test(error.message || '')) {   // before migration 004
           delete fields.destination; delete fields.destination_places;
@@ -439,20 +712,23 @@
         if (layout) {
           const rows = LAYOUT.toRows(layout);
           const r = await sb.rpc('apply_layout', { p_trip: data.id, p_expect: data.updated_at, p_phases: rows.phases, p_days: rows.days });
-          if (r.error) { fail('The trip was made, but the draft couldn\'t be saved: ' + errText(r.error)); return; }
+          if (r.error) { fail('The trip was made, but its plan couldn\'t be saved: ' + errText(r.error)); return; }
           const seen = {};
-          const places = st.stops.filter(s => s.lat != null && !seen[s.place] && (seen[s.place] = 1))
+          const places = stops.filter(s => s.lat != null && !seen[s.place] && (seen[s.place] = 1))
             .map(s => ({ trip_id: data.id, name: s.place, lat: s.lat, lng: s.lng, country: s.country || null, found_as: s.label || null }));
           if (places.length) sb.from('places').upsert(places, { onConflict: 'trip_id,name' }).then(x => { if (x && x.error) console.warn('places not saved', x.error.message); });
         } else {
           const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
           pendingStop = one;
         }
+        if (gl) { gl.remove(); gl = null; }
         close(); location.hash = '#/trip/' + data.id;
       }
 
+      // Escape closes an open blank or the calendar before it closes the pop-up.
+      box.addEventListener('keydown', e => { if (e.key === 'Escape' && (st.open || st.cal)) { e.stopPropagation(); st.open = null; st.cal = null; draw(); } }, true);
       draw();
-      box.append(h('h2', null, 'New trip'), top, body, err);
+      box.append(x, lbl, body, err, foot);
     });
   }
 

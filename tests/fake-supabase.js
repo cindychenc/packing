@@ -136,11 +136,21 @@
             window.__lastInvoke = { name, body: b };
             await new Promise(r => setTimeout(r, 150));
             if (localStorage.getItem('fake:draft') === 'fail') return { data: null, error: { message: 'Edge Function returned a non-2xx status code', context: { json: async () => ({ error: 'The AI couldn\'t make a draft just now. Try again in a minute.' }) } } };
+            const st = (place, country, nights, why, next) => ({ place, country, nights, why, next });
             return { data: { model: 'fake', draft: {
-              description: 'Coast to mountains through ' + b.destination + '.',
-              phases: [
-                { name: 'Central Chile', stops: [{ place: 'Santiago', country: 'Chile', nights: 3, why: 'Fly in and get your bearings.' }, { place: 'Pucón', country: 'Chile', nights: 4, why: 'Volcano and lake hikes.' }] },
-                { name: 'Patagonia', stops: [{ place: 'Puerto Natales', country: 'Chile', nights: 6, why: 'Base for the W Trek.' }, { place: 'El Chaltén', country: 'Argentina', nights: 9, why: 'Day hikes to Fitz Roy.' }] }] } }, error: null };
+              description: 'All three end with Fitz Roy. They differ in the first week through ' + b.destination + '.',
+              shared: [{ text: 'Fitz Roy day hikes', kind: 'hike', place: 'El Chaltén' }],
+              routes: [
+                { name: 'The big treks', tag: 'Easiest to plan', pitch: 'Two short flights and most of your time on the trails!', best_for: ['nature & adventure'],
+                  highlights: [{ text: 'W Trek, 5 days', kind: 'hike', place: 'Puerto Natales', because: 'nature & adventure' }, { text: 'Skips the lakes', kind: 'lake', skip: true }],
+                  phases: [{ name: 'Central Chile', stops: [st('Santiago', 'Chile', 3, 'Fly in and get your bearings.', 'fly'), st('Pucón', 'Chile', 4, 'Volcano and lake hikes.', 'fly')] },
+                    { name: 'Patagonia', stops: [st('Puerto Natales', 'Chile', 6, 'Base for the W Trek.', 'bus'), st('El Chaltén', 'Argentina', 9, 'Day hikes to Fitz Roy.')] }] },
+                { name: 'Lakes first', tag: 'Quietest', pitch: 'A slow week of lakes, then south.', best_for: ['slowly, 3+ nights per stop'],
+                  highlights: [{ text: 'Volcano hikes', kind: 'volcano', place: 'Pucón' }, { text: 'Skips the W Trek', kind: 'hike', skip: true }],
+                  phases: [{ name: 'Lakes', stops: [st('Pucón', 'Chile', 10, 'Lakes and volcanoes.', 'fly')] }, { name: 'Patagonia', stops: [st('El Chaltén', 'Argentina', 11, 'Fitz Roy.')] }] },
+                { name: 'Road trip', tag: 'Most remote', pitch: 'Drive south.', best_for: [],
+                  highlights: [{ text: 'Self-drive', kind: 'drive' }, { text: 'Skips flights', kind: 'flight', skip: true }],
+                  phases: [{ name: 'South', stops: [st('Santiago', 'Chile', 2, 'Pick up the car.', 'drive'), st('Puerto Natales', 'Chile', 9, 'W Trek.', 'drive'), st('El Chaltén', 'Argentina', 9, 'Fitz Roy.')] }] }] } }, error: null };
           }
         },
         auth: {
