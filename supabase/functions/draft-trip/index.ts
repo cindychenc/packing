@@ -2,7 +2,7 @@
 // Runs on Supabase (Deno). Needs the secret ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
 // The key never reaches the browser. Only signed-in people can call this, up to DAILY_LIMIT drafts a day.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, repairMessage, type Ask } from './prompt.ts';
+import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, repairMessage, nightsFor, type Ask } from './prompt.ts';
 
 const DAILY_LIMIT = 20;
 const ALLOWED = ['https://packing.boringcase.com', 'http://localhost:8000'];
@@ -118,6 +118,29 @@ Deno.serve(async (req) => {
       else console.warn('repair did not help', routes[x.i].name);
     });
   }
+  // Last step: make every phase add up exactly, so no days are left unplanned.
+  // Too many nights come off the end of the phase. Missing nights go to its shortest stays first, up to 2 past the pace
+  // (remote areas like the Pamirs don't have enough towns for 2-3 nights each), then round and round if still short.
+  // Each added night gets a "Spare day" line, so it's clear it was added.
+  const [, hi] = nightsFor(ask.pace);
+  filled.forEach((phases: any[], i: number) => phases.forEach((p: any, j: number) => {
+    const want = routes[i].phases[j].days, stops = p.stops;
+    if (!stops.length) return;
+    let have = stops.reduce((a: number, s: any) => a + s.nights, 0);
+    for (let k = stops.length - 1; k >= 0 && have > want; k--) {
+      const cut = Math.min(stops[k].nights - 1, have - want); stops[k].nights -= cut; stops[k].plans = stops[k].plans.slice(0, stops[k].nights); have -= cut;
+    }
+    if (have < want) console.warn('filled', routes[i].name, p.name, want - have, 'nights');
+    for (let cap = hi + 2; have < want; cap = Infinity) {
+      let grew = false;
+      while (have < want) {
+        const room = stops.filter((s: any) => s.nights < cap); if (!room.length) break;
+        const low = Math.min(...room.map((s: any) => s.nights));
+        for (const s of room) { if (have >= want) break; if (s.nights === low) { s.nights++; have++; grew = true; s.plans.push('Spare day: rest or a day trip from ' + s.place); } }
+      }
+      if (!grew && cap === Infinity) break;
+    }
+  }));
   const ready: any[] = [];
   routes.forEach((r: any, i: number) => {
     const phases = filled[i].filter((p: any) => p.stops.length);
