@@ -487,6 +487,7 @@
         st.routes = draft.routes.map(r => {
           const fit = NT.fitNights(r.phases, total, NT.paceCap(st.ans.pace));
           const L = LAYOUT.fromDraft(r.phases, total).layout;
+          fillDays(L, NT.dayPlans(r.phases, (r.highlights || []).concat(draft.shared || [])));
           const stops = [];
           r.phases.forEach((p, pi) => (p.stops || []).forEach(s => {
             const f = at[s.place + '|' + (s.country || '')] || {};
@@ -496,6 +497,11 @@
           }));
           return { r, layout: L, stops, left: fit.left };
         });
+      }
+      // Put the day-by-day lines into a new layout's days, in order (days past the planned ones stay empty).
+      function fillDays(L, lines) {
+        let k = 0;
+        L.phases.forEach(p => p.days.forEach(d => { const x = lines[k++]; if (x) { d.plan = x.plan; d.notes = x.notes; } }));
       }
       function routesPart() {
         const R = st.routes, cur = R[st.cur];
@@ -698,6 +704,7 @@
         if (o.plan) {
           days = o.plan.days; start = o.plan.start || null;
           layout = LAYOUT.fromDraft(o.plan.phases, days).layout;
+          fillDays(layout, NT.dayPlans(o.plan.phases, [], { travel: false }));
           o.plan.phases.forEach(ph => ph.stops.forEach(s => stops.push(s)));
           if (!name) name = st.imp.file ? st.imp.file.replace(/\.[^.]+$/, '') : (o.plan.phases[0].name || o.plan.phases[0].stops[0].place);
         }

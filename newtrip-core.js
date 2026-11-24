@@ -119,6 +119,39 @@
     return { sum, left: Math.max(0, total - sum) };
   }
 
+  /* What to write in each day of a new plan, in order: { plan, notes } per night.
+     - The first day at a stop says how you got there ("Bus from Osh"); the trip's first day says "Arrive in …".
+     - The route's highlights (and the ones all routes share) go on the stop they belong to: the second day when there is one,
+       since the first is a travel day.
+     - Lines Claude wrote for each night (stop.plans) or rows from an imported sheet fill the rest.
+     - The last day says it's the last night. */
+  const MODE_FROM = { fly: 'Fly from ', bus: 'Bus from ', drive: 'Drive from ', train: 'Train from ', boat: 'Boat from ' };
+  function dayPlans(phases, highlights, opts) {
+    const travel = !(opts && opts.travel === false);
+    const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => stops.push(s)));
+    const out = [];
+    const norm = t => String(t || '').toLowerCase();
+    const words = t => norm(t).split(/[^a-zà-ÿ]+/).filter(w => w.length >= 5);
+    stops.forEach((s, i) => {
+      const n = Math.max(1, s.nights || 1), prev = stops[i - 1];
+      const days = Array.from({ length: n }, (_, k) => {
+        const own = Array.isArray(s.plans) ? s.plans[k] : null;
+        return own ? [tidy(own)] : [];
+      });
+      if (!travel) { /* imported plans keep only their own words */ }
+      else if (i === 0) days[0].unshift('Arrive in ' + s.place);
+      else if (prev) days[0].unshift((MODE_FROM[prev.next] || 'Travel from ') + prev.place);
+      (highlights || []).filter(hl => hl && !hl.skip && hl.place && norm(hl.place) === norm(s.place)).forEach(hl => {
+        const text = tidy(hl.text), w = words(text);
+        const already = days.some(d => d.some(line => w.some(x => norm(line).indexOf(x) >= 0)));
+        if (!already) days[n > 1 ? 1 : 0].push(text);
+      });
+      days.forEach((d, k) => out.push({ plan: d.filter(Boolean).join(' · ') || null, notes: k === 0 && s.why ? tidy(s.why) : null }));
+    });
+    if (travel && out.length) { const last = out[out.length - 1]; last.plan = (last.plan ? last.plan + ' · ' : '') + 'Last night'; }
+    return out;
+  }
+
   // Words the voice guide rules out; a highlight or pitch using one is still shown, minus exclamation marks.
   const tidy = t => String(t || '').replace(/!+/g, '.').replace(/\s+/g, ' ').trim();
 
@@ -218,7 +251,7 @@
     rows = (rows || []).filter(r => r.some(c => cellText(c)));
     if (!rows.length) return { error: 'Nothing to import yet. Paste rows from a spreadsheet, or upload a .csv or .xlsx file.' };
     const width = Math.max(...rows.map(r => r.length));
-    let col = { place: -1, nights: -1, phase: -1, date: -1 }, body = rows;
+    let col = { place: -1, nights: -1, phase: -1, date: -1, plan: -1 }, body = rows;
     // A header row is one where some cell names a column we know.
     const hi = rows.slice(0, 5).findIndex(r => r.some(c => HEAD.place.test(cellText(c))));
     if (hi >= 0) {
@@ -250,9 +283,10 @@
       n = Math.min(n, 365);
       let ph = out[out.length - 1];
       if (!ph || (phase && ph.name !== phase)) { ph = { name: phase, stops: [] }; out.push(ph); }
+      const plan = col.plan >= 0 ? cellText(r[col.plan]).slice(0, 300) : '';
       const last = ph.stops[ph.stops.length - 1];
-      if (byDay && last && last.place.toLowerCase() === place.toLowerCase()) last.nights += 1;
-      else ph.stops.push({ place, nights: n });
+      if (byDay && last && last.place.toLowerCase() === place.toLowerCase()) { last.nights += 1; last.plans.push(plan); }
+      else ph.stops.push({ place, nights: n, plans: [plan] });
     });
     const days = out.reduce((a, p) => a + p.stops.reduce((b, s) => b + s.nights, 0), 0);
     if (!days) return { error: 'Couldn’t find any places in those rows.' };
@@ -261,7 +295,7 @@
   }
 
   const api = { BLANKS, REQUIRED, EXTRAS, optionsFor, extrasFor, tokens, missing, lengthText, request, listText,
-    addDays, daysIncl, isIso, monthGrid, fitNights, paceCap, tidy, parseDelimited, readXlsx, planFromRows, cellDate };
+    addDays, daysIncl, isIso, monthGrid, fitNights, paceCap, dayPlans, tidy, parseDelimited, readXlsx, planFromRows, cellDate };
   root.SuitcaseNewTrip = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

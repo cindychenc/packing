@@ -352,6 +352,8 @@ try:
         t = [x for x in db['trips'] if x['name'] == 'Patagonia'][0]
         ok(t['destination'] == 'Patagonia' and t['subtitle'] == 'Two short flights and most of your time on the trails.' and t['length_days'] == 21, f"trip keeps destination and the route's pitch ({t['subtitle']!r})")
         ok(sorted(p['name'] for p in db['places'] if p['trip_id'] == t['id']) == ['El Chaltén', 'Pucón', 'Puerto Natales', 'Santiago'], 'stops found on the map are kept')
+        plans = [d['plan'] for d in sorted([d for d in db['days'] if d['trip_id'] == t['id']], key=lambda d: d['idx'])]
+        ok(plans[0] == 'Arrive in Santiago' and plans[3] == 'Fly from Santiago' and plans[8] == 'W Trek, 5 days' and plans[20].endswith('Last night'), f'day plans filled in ({plans[:9]} … {plans[20]})')
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
 
         # 9f. import: pasted rows, then an .xlsx file

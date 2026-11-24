@@ -32,13 +32,21 @@ ph = [{ stops: [{ nights: 2 }, { nights: 3 }, { nights: 2 }] }]; let fit = T.fit
 ok(eq(ph[0].stops.map(s => s.nights), [3, 3, 3]) && fit.left === 51, 'a 2-month trip with too few stops: no stop past 3 nights, the rest left to plan');
 ok(T.paceCap('steadily, 2–3 nights per stop') === 3 && T.paceCap('quickly, 1–2 nights per stop') === 2 && T.paceCap('slowly, 3+ nights per stop') === 5 && T.paceCap('whatever') === 4, 'pace caps');
 
+// day plans
+let dp = T.dayPlans([{ stops: [{ place: 'Tashkent', nights: 2, next: 'train', why: 'Fly in here.' }, { place: 'Samarkand', nights: 3, next: 'bus', plans: ['Registan at dusk', 'Shah-i-Zinda', 'Day trip to Urgut'] }] },
+  { stops: [{ place: 'Karakol', nights: 1 }] }], [{ text: 'Registan square at sunset', place: 'Samarkand' }, { text: 'Hike to Altyn-Arashan', place: 'Karakol' }, { text: 'Skips Khiva', place: 'Khiva', skip: true }]);
+ok(eq(dp.map(d => d.plan), ['Arrive in Tashkent', null, 'Train from Tashkent · Registan at dusk', 'Shah-i-Zinda', 'Day trip to Urgut', 'Bus from Samarkand · Hike to Altyn-Arashan · Last night'])
+  && dp[0].notes === 'Fly in here.' && dp[1].notes === null, 'day plans: travel in, Claude lines, highlights not doubled, last night: ' + JSON.stringify(dp.map(d => d.plan)));
+dp = T.dayPlans([{ stops: [{ place: 'Lisbon', nights: 2, plans: ['', 'Belém'] }] }], [], { travel: false });
+ok(eq(dp.map(d => d.plan), [null, 'Belém']), 'imported: only their own words');
+
 // csv / tsv
 let rows = T.parseDelimited('Place,Nights,Region\nSantiago,2,Chile\n"Puerto Natales, Chile",6,Patagonia\nEl Chaltén,5,Patagonia\n');
 let p = T.planFromRows(rows);
 ok(p.days === 13 && eq(p.phases.map(x => x.name), ['Chile', 'Patagonia']) && p.phases[1].stops[0].place === 'Puerto Natales, Chile', 'CSV with header: ' + JSON.stringify(p.phases));
 rows = T.parseDelimited('Date\tLocation\tPlan\n2027-04-05\tLisbon\tArrive\n2027-04-06\tLisbon\tAlfama\n2027-04-07\tSintra\tPena\n2027-04-08\tLisbon\t\n');
 p = T.planFromRows(rows);
-ok(p.start === '2027-04-05' && p.days === 4 && eq(p.phases[0].stops, [{ place: 'Lisbon', nights: 2 }, { place: 'Sintra', nights: 1 }, { place: 'Lisbon', nights: 1 }]), 'one row per day, TSV');
+ok(p.start === '2027-04-05' && p.days === 4 && eq(p.phases[0].stops, [{ place: 'Lisbon', nights: 2, plans: ['Arrive', 'Alfama'] }, { place: 'Sintra', nights: 1, plans: ['Pena'] }, { place: 'Lisbon', nights: 1, plans: [''] }]), 'one row per day, TSV');
 p = T.planFromRows(T.parseDelimited('Tokyo\t4\nKyoto\t3\nOsaka\t2'));
 ok(p.days === 9 && p.phases[0].stops.length === 3, 'no header: places + nights found');
 ok(/column of places/.test(T.planFromRows([['1', '2'], ['3', '4']]).error), 'no places: a clear error');

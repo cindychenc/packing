@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
   });
 
   // Step 2: the stops for each route, all three at once.
-  const filled = await Promise.all(routes.map((r: any) => ask_(STOPS_SYSTEM, STOPS_TOOL, stopsMessage(ask, r), Math.min(16000, 3000 + ask.days * 120))));
+  const filled = await Promise.all(routes.map((r: any) => ask_(STOPS_SYSTEM, STOPS_TOOL, stopsMessage(ask, r), Math.min(20000, 3000 + ask.days * 200))));
   const ready: any[] = [];
   routes.forEach((r: any, i: number) => {
     const got = Array.isArray(filled[i]?.phases) ? filled[i].phases : [];
@@ -98,7 +98,10 @@ Deno.serve(async (req) => {
       return { name: p.name, stops };
     }).filter((p: any) => p.stops.length);
     if (!phases.length) return;
-    phases.forEach((p: any) => p.stops.forEach((st: any) => { if (st.next && !MODES.includes(st.next)) st.next = 'bus'; }));
+    phases.forEach((p: any) => p.stops.forEach((st: any) => {
+      if (st.next && !MODES.includes(st.next)) st.next = 'bus';
+      st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
+    }));
     ready.push({ ...r, phases, highlights: (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl) });
   });
   if (!ready.length) return fail();

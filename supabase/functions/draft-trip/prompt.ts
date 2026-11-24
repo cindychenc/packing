@@ -167,6 +167,9 @@ Rules:
 - Include the towns named in the route's highlights as stops, in the phase they belong to.
 - Order stops along a realistic route. Long transfers eat into a stop.
 - For each stop, say how the traveller gets to the next stop (fly, bus, drive, train or boat). The very last stop of the route has none.
+- For each stop, give one short line per night ("plans"), in order: what to do that day, under 8 words, noun or verb first
+  ("Day hike to Laguna Torre", "Old town and the Registan", "Rest day, hot springs"). Put the route's highlights on the right days.
+  Multi-day hikes take one line per day ("W Trek day 2: French Valley"). Don't mention the journey in; the app adds it.
 - For each stop, write one sentence (at most 20 words) to the traveller on why it's in the trip.
   Example: "Base for the W Trek; buses to the park leave at 7 am."
 
@@ -208,6 +211,8 @@ export const STOPS_TOOL = {
                   nights: { type: 'integer', minimum: 1 },
                   why: { type: 'string', description: 'One sentence, at most 20 words.' },
                   next: { type: 'string', enum: MODES, description: 'How to get to the next stop. Leave out on the last stop of the route.' },
+                  plans: { type: 'array', items: { type: 'string' },
+                    description: 'One short line per night at this stop, in order: what to do that day, under 8 words. The app adds the journey in, so the first line is about the place.' },
                 },
               },
             },
