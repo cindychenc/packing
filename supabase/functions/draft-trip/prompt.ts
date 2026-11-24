@@ -72,8 +72,19 @@ Routes:
   Before answering, add them up.
 - Order phases along a realistic route with no backtracking unless there's no other way.
 - Respect what they love, what they must do, and what they'd rather avoid. If they give a start or end point, use it.
-- Think about the season: if a date or season is given, avoid places that are closed, snowed in or at their worst then.
 - If the destination is too vague or too big for the length, pick a sensible part of it and say so in the description.
+- If the destination is small for the length at their pace (one city for months, a small island for weeks), don't stretch it
+  into a back-and-forth. Make the three routes three honest options and say so in the description:
+  one that stays put with a few long stays (set long_stays on its phases; their pace doesn't apply there),
+  one that uses the place as a base with nearby towns, and one that widens to the surrounding region.
+
+Season:
+- Seasons are where the destination is: "in winter" means June–August south of the equator, December–February north of it.
+- If a date or season is given, plan for the weather then. Avoid places that are closed, snowed in, flooded or at their worst.
+- If something they love or must do doesn't work in that season (snowbound trails, closed parks, the monsoon), don't plan it anyway.
+  Swap in the nearest thing that does work then, and make that route's trade-off say so plainly
+  ("Skips multi-day hikes: trails are snowbound until June").
+- If no date or season is given, end the description with the best months to go, in a few words.
 
 Highlights:
 - Give each route 3–4 highlights: what makes this route different from the other two. Name the town each one happens in ("place").
@@ -142,6 +153,7 @@ export const OUTLINE_TOOL = {
                   name: { type: 'string' },
                   days: { type: 'integer', minimum: 1, description: 'Days in this phase. All phases add up to the trip length.' },
                   plan: { type: 'string', description: 'A few words on what this phase is for and its main towns, for the next step.' },
+                  long_stays: { type: 'boolean', description: 'True when this phase is meant as a few long stays (a small destination for a long time).' },
                 },
               },
             },
@@ -166,6 +178,10 @@ Rules:
   No hotels, trails or neighbourhoods as stops.
 - Include the towns named in the route's highlights as stops, in the phase they belong to.
 - Order stops along a realistic route. Long transfers eat into a stop.
+- A phase marked "long stays" is meant as a few long stays in one area: the nights per stop don't apply there.
+- If a date or season is given, keep every day's line right for the weather then (seasons are where the destination is:
+  winter is June–August south of the equator). No high mountain hikes in deep winter, no beach days in the rainy season.
+  If a day would only work in another season, plan what does work then instead.
 - For each stop, say how the traveller gets to the next stop (fly, bus, drive, train or boat). The very last stop of the route has none.
 - For each stop, give one short line per night ("plans"), in order: what to do that day, under 8 words, noun or verb first
   ("Day hike to Laguna Torre", "Old town and the Registan", "Rest day, hot springs"). Put the route's highlights on the right days.
@@ -179,7 +195,8 @@ Use the make_stops tool to answer. Don't write anything else.`;
 
 export function stopsMessage(r: Ask, route: any): string {
   const [lo, hi] = nightsFor(r.pace);
-  const phases = (route.phases ?? []).map((p: any, i: number) => `${i + 1}. ${p.name}: ${p.days} days, so ${stopsFor(p.days, r.pace)}. ${p.plan ?? ''}`.trim());
+  const phases = (route.phases ?? []).map((p: any, i: number) =>
+    `${i + 1}. ${p.name}: ${p.days} days, ${p.long_stays ? 'long stays (a few stops, the nights per stop don\'t apply)' : 'so ' + stopsFor(p.days, r.pace)}. ${p.plan ?? ''}`.trim());
   const hl = (route.highlights ?? []).filter((h: any) => h.place && !h.skip).map((h: any) => `${h.text} (${h.place})`);
   return [...about(r), `Nights per stop: ${lo}–${hi}`, '',
     `Route: ${route.name}. ${route.pitch ?? ''}`,
