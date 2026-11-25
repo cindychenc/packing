@@ -616,6 +616,9 @@
           mb.accessToken = CFG.mapboxToken;
           const m = x.gl = new mb.Map({ container: el, style: 'mapbox://styles/mapbox/light-v11', bounds: boundsOf(pts), fitBoundsOptions: { padding: 30, maxZoom: 9 },
             dragRotate: false, pitchWithRotate: false, cooperativeGestures: true, attributionControl: false });
+          // The pop-up grows to full width as step 3 opens, so the map is made while its cell is still narrow:
+          // follow the cell's size, or the map stays drawn at that first width.
+          if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (x.gl === m) m.resize(); }); ro.observe(el); m.on('remove', () => ro.disconnect()); }
           m.addControl(new mb.NavigationControl({ showCompass: false }), 'top-right');
           m.addControl(new mb.AttributionControl({ compact: true }), 'bottom-right');
           const legs = [];
@@ -623,6 +626,7 @@
             legs.push({ type: 'Feature', properties: { fly: s.next === 'fly' }, geometry: { type: 'LineString', coordinates: PLACES.curved([s, t]).map(p => [p[1], p[0]]) } }); });
           const pins = pts.map((s, i) => ({ type: 'Feature', properties: { c: s.colour, end: i === 0 || i === pts.length - 1, name: s.place }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
           m.on('load', () => {
+            m.resize(); m.fitBounds(boundsOf(pts), { padding: 30, maxZoom: 9, duration: 0 });
             m.addSource('legs', { type: 'geojson', data: { type: 'FeatureCollection', features: legs } });
             m.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: pins } });
             m.addLayer({ id: 'legs', type: 'line', source: 'legs', filter: ['!', ['get', 'fly']], paint: { 'line-color': '#3F5675', 'line-width': 2.5 }, layout: { 'line-cap': 'round' } });
