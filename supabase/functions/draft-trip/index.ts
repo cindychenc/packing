@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
   const fail = () => reply(502, { error: 'The AI couldn\'t make a draft just now. Try again in a minute.' });
 
   // Step 1: three outlines (phases with days), or the one tweaked route.
-  const outline = tweak ? await ask_(OUTLINE_SYSTEM, TWEAK_TOOL, tweakMessage(ask, tweak.route, tweak.text), 3000)
+  const outline = tweak ? await ask_(OUTLINE_SYSTEM, TWEAK_TOOL, tweakMessage(ask, tweak.route, tweak.text), 6000)
     : await ask_(OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage(ask), 6000);
   const routes = (Array.isArray(outline?.routes) ? outline.routes.filter((r: any) => Array.isArray(r?.phases) && r.phases.length) : []).slice(0, tweak ? 1 : 3);
   if (!routes.length) return fail();
@@ -154,10 +154,14 @@ Deno.serve(async (req) => {
       if (!grew && cap === Infinity) break;
     }
   }));
+  // A phase can come back with no stops (a cut-off or skipped answer); it's dropped, and its days go missing.
+  // Keep a route only if it still covers most of the trip, so a short one never replaces a good one.
   const ready: any[] = [];
   routes.forEach((r: any, i: number) => {
     const phases = filled[i].filter((p: any) => p.stops.length);
-    if (phases.length) ready.push({ ...r, phases, highlights: (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl) });
+    const nights = phases.reduce((a: number, p: any) => a + p.stops.reduce((b: number, s: any) => b + s.nights, 0), 0);
+    if (nights < ask.days * 0.8) { console.warn('route too short', r.name, nights, 'of', ask.days, 'phases', r.phases.length, 'with stops', phases.length); return; }
+    ready.push({ ...r, phases, highlights: (Array.isArray(r.highlights) ? r.highlights : []).map(fixHl) });
   });
   if (!ready.length) return fail();
   const shared = (Array.isArray(outline.shared) ? outline.shared : []).map(fixHl);

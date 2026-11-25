@@ -300,6 +300,7 @@ export function tweakMessage(r: Ask, route: Draft, change: string): string {
     `Here is one of the three routes you gave them, "${route.name}"${route.tag ? ` (${route.tag})` : ''}:`, ...now, '',
     `They want this changed: ${change}`, '',
     'Give back just this one route with that change made. Keep the rest as close to the route above as you can, keep its name unless the change makes it wrong,',
-    `and keep the days adding up to exactly ${r.days}. Use the redo_route tool.`, '',
+    `and keep the days adding up to exactly ${r.days}: the whole trip, every phase, not just the part that changes.`,
+    `So the route needs ${stopsFor(r.days, r.pace)} in all; give the phases days to fit them. Use the redo_route tool.`, '',
     NOTE + ' The change they typed counts as one of their wishes too.'].join('\n');
 }

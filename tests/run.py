@@ -357,6 +357,9 @@ try:
         ok('Picked: Lakes first' in page.inner_text('.nt-foot') and page.is_visible('.cx-c.ft.on .twb') and len(page.query_selector_all('.twb')) == 1, 'picking a column; Tweak only under the picked one')
         page.click('.twb')
         ok(page.is_visible('.twt') and not page.is_visible('.nt-foot button:has-text("Build my trip")'), 'tweak box open; Build hides meanwhile')
+        page.fill('.twt', 'make it short'); page.click('button:has-text("Redraw this route")'); page.wait_for_selector('.modal .notice.warn:not(.hidden)')
+        ok("Couldn't redraw that route" in page.inner_text('.modal .notice.warn') and page.input_value('.twt') == 'make it short' and '21 nights' in page.inner_text('.cx-c.on >> nth=5'),
+           'a redraw that covers much less of the trip is refused; the route and the typed change stay')
         page.fill('.twt', 'end in Buenos Aires'); page.click('button:has-text("Redraw this route")')
         page.wait_for_selector('.twd')
         tw = page.evaluate('window.__lastInvoke')['body']

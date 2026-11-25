@@ -553,7 +553,10 @@
         hideErr(); st.redraw = k; st.tw = null; draw();
         const { data, error } = await sb.functions.invoke('draft-trip', { body: Object.assign(NT.request(st.ans, ctx()), { tweak: { text: text.slice(0, 300), route } }) });
         st.redraw = null;
-        const got = !error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes[0];
+        let got = !error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes[0];
+        // never swap a full route for one that covers much less of the trip
+        const nights = r2 => (r2.phases || []).reduce((a, p) => a + (p.stops || []).reduce((b, s) => b + (+s.nights || 0), 0), 0);
+        if (got && nights(got) < lengthOf() * 0.8) { console.warn('tweak came back short', nights(got), 'of', lengthOf()); got = null; st.twText = text; }
         if (got) {
           try { const [nx] = await prepareRoutes([got]); nx.tweak = text; dropMaps([st.routes[k]]); st.routes[k] = nx; st.twText = ''; if (st.step === 'routes') draw(); return; }
           catch (e) { console.warn(e); }

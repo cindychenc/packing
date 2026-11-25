@@ -137,6 +137,8 @@
             await new Promise(r => setTimeout(r, 150));
             if (localStorage.getItem('fake:draft') === 'fail') return { data: null, error: { message: 'Edge Function returned a non-2xx status code', context: { json: async () => ({ error: 'The AI couldn\'t make a draft just now. Try again in a minute.' }) } } };
             const st = (place, country, nights, why, next) => ({ place, country, nights, why, next });
+            if (b.tweak && b.tweak.text === 'make it short') return { data: { model: 'fake', draft: { routes: [{ name: b.tweak.route.name, pitch: 'Short.', highlights: [],
+              phases: [{ name: 'Central Chile', stops: [st('Santiago', 'Chile', 3, 'Fly in.')] }] }] } }, error: null };
             if (b.tweak) return { data: { model: 'fake', draft: { routes: [{ name: b.tweak.route.name, tag: 'Quietest', pitch: 'Lakes, then out of Buenos Aires.', only: 'Ends in Buenos Aires.', shape: 'open',
               highlights: [{ text: 'Volcano hikes', kind: 'volcano', place: 'Pucón' }],
               phases: [{ name: 'Lakes', stops: [st('Pucón', 'Chile', 10, 'Lakes and volcanoes.', 'fly')] }, { name: 'Buenos Aires', stops: [st('Buenos Aires', 'Argentina', 11, 'Food and walks.')] }] }] } }, error: null };
