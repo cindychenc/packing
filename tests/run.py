@@ -66,7 +66,7 @@ try:
         nxt = '.nt-foot button:has-text("Next →")'
         ok(page.inner_text('.nt-lbl') == 'NEW TRIP · 1 OF 3' or page.inner_text('.nt-lbl').upper() == 'NEW TRIP · 1 OF 3', 'step label')
         ok(page.is_disabled(nxt) and not page.query_selector('.seg-btn[aria-pressed=true]'), 'nothing picked; Next waits for answers')
-        ok(page.is_visible('.nt-foot button:has-text("Copy / import an existing plan")'), 'import button on the left of the footer')
+        ok(page.is_visible('.nt-foot button:has-text("Import a plan you have")'), 'import button on the left of the footer')
         page.fill('.modal .dest-in', 'Portugal')
         page.click('.seg-btn:has-text("Not yet")')
         ok(page.is_disabled(nxt) and not page.is_visible('.rp-btn'), 'Next waits for a length; no calendar for Not yet')
@@ -359,7 +359,7 @@ try:
 
         # 9f. import: pasted rows, then an .xlsx file
         page.click('.page-head .btn.primary'); page.wait_for_selector('.modal.newtrip')
-        page.click('.nt-foot button:has-text("Copy / import")'); page.wait_for_selector('.imp-ta')
+        page.click('.nt-foot button:has-text("Import a plan you have")'); page.wait_for_selector('.imp-ta')
         ok('IMPORT A PLAN' in page.inner_text('.nt-lbl').upper() and page.is_disabled('.nt-foot button:has-text("Import plan")'), 'import screen; Import waits for a plan')
         page.fill('.imp-ta', 'https://docs.google.com/spreadsheets/d/abc'); page.wait_for_selector('.newtrip .notice')
         ok('Links are coming soon' in page.inner_text('.newtrip .notice'), 'links: coming soon, with the .csv tip')

@@ -241,7 +241,7 @@
   /* ───────────── new trip pop-up ─────────────
      Canvas "Design · New trip prototype", frames 1a–1d:
      1 · where + dates → 2 · finish the sentence → 3 · three routes on a map → Customize this plan.
-     Or, from step 1: Copy / import an existing plan (rows pasted from a sheet, or a .csv / .xlsx file). */
+     Or, from step 1: Import a plan you have (rows pasted from a sheet, or a .csv / .xlsx file). */
   const NT = window.SuitcaseNewTrip;
   const ROUGH = [['weekend', 'Weekend', 3], ['w1', '1 week', 7], ['w2', '2 weeks', 14], ['w3', '3 weeks', 21]];
   let pendingStop = null;   // first stop to put in "Let's get started." once the new trip opens
@@ -412,7 +412,7 @@
       }
       function drawFoot1() {
         const ready = destOk() && datesOk();
-        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => go('import') }, 'Copy / import an existing plan'),
+        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => go('import') }, 'Import a plan you have'),
           [h('span', { class: 'muted' }, !destOk() ? 'Add where you\'re going.' : !datesOk() ? (st.mode === 'exact' ? 'Pick your first and last day.' : 'Answer the dates question.') : ''),
             h('button', { type: 'button', class: 'btn primary', disabled: !ready, onclick: () => go('sentence') }, 'Next →')]);
       }
