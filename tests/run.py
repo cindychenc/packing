@@ -328,6 +328,7 @@ try:
         page.click('.nt-foot button:has-text("See my options")')
         ok(page.is_visible('text=Drawing up three routes'), 'shows it is working')
         page.wait_for_selector('.ro.on')
+        ok('Open-jaw · into Santiago, out of El Chaltén' in page.inner_text('.ro.on'), 'route shape shown on the card')
         sent = page.evaluate('window.__lastInvoke')
         ok(sent['name'] == 'draft-trip' and sent['body'] == {'destination': 'Patagonia', 'days': 21, 'start': None, 'who': 'by myself', 'loves': ['nature & adventure', 'glaciers'],
            'pace': 'slowly, 3+ nights per stop', 'when': None, 'from': None, 'to': None, 'must': ['do a multi-day hike'], 'avoid': None}, f'sends the sentence ({sent})')

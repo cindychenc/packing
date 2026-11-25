@@ -30,6 +30,7 @@ export const LONG_TRIP_DAYS = 45;
 export type Ask = {
   destination: string; days: number; start: string | null; who: string | null; loves: string[]; pace: string | null;
   when: string | null; from: string | null; to: string | null; must: string[]; avoid: string | null;
+  shape: 'loop' | 'open' | null;
 };
 
 // Nights per stop for each pace answer; anything typed gets a middle range.
@@ -54,6 +55,8 @@ function about(r: Ask): string[] {
   ];
   if (r.from) lines.push(`Start point: ${r.from}`);
   if (r.to) lines.push(`End point: ${r.to}`);
+  if (r.shape === 'loop') lines.push('Route shape: back where they started (a loop)');
+  if (r.shape === 'open') lines.push('Route shape: end somewhere else (open-jaw)');
   if (r.must.length) lines.push(`Must do: ${r.must.join('; ')}`);
   if (r.avoid) lines.push(`Would rather avoid: ${r.avoid}`);
   return lines;
@@ -75,6 +78,10 @@ Routes:
   Before answering, add them up.
 - Order phases along a realistic route with no backtracking unless there's no other way.
 - Respect what they love, what they must do, and what they'd rather avoid. If they give a start or end point, use it.
+- Loop or open-jaw: follow the route shape if they give one. If not, prefer open-jaw (in at one end, out of the other) when there's
+  a well-served airport near the far end: less backtracking, usually cheaper overall. Loop back when the region is compact
+  or the only good airport is where they started. When it's a close call, make at least one of the three routes the other kind.
+  Set shape on each route, and say it in the pitch when it matters ("Fly into Santiago, out of Buenos Aires").
 - If the destination is too vague or too big for the length, pick a sensible part of it and say so in the description.
 - If the destination is small for the length at their pace (one city for months, a small island for weeks), don't stretch it
   into a back-and-forth. Make the three routes three honest options and say so in the description:
@@ -144,9 +151,10 @@ export const OUTLINE_TOOL = {
       routes: {
         type: 'array', minItems: 3, maxItems: 3,
         items: {
-          type: 'object', required: ['name', 'tag', 'pitch', 'best_for', 'highlights', 'phases'],
+          type: 'object', required: ['name', 'tag', 'pitch', 'shape', 'best_for', 'highlights', 'phases'],
           properties: {
             name: { type: 'string' },
+            shape: { type: 'string', enum: ['loop', 'open'], description: 'loop: ends where it starts; open: ends somewhere else (open-jaw).' },
             tag: { type: 'string' },
             pitch: { type: 'string' },
             best_for: { type: 'array', items: { type: 'string' }, maxItems: 3 },

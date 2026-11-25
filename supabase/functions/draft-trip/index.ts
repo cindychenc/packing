@@ -40,6 +40,7 @@ Deno.serve(async (req) => {
     start: /^\d{4}-\d{2}-\d{2}$/.test(body.start ?? '') ? body.start : null,
     who: one(body.who), loves: many(body.loves), pace: one(body.pace), when: one(body.when),
     from: one(body.from), to: one(body.to), must: many(body.must), avoid: one(body.avoid),
+    shape: body.shape === 'loop' || body.shape === 'open' ? body.shape : null,
   };
   if (!ask.destination || !(ask.days >= 1 && ask.days <= 731)) return reply(400, { error: 'Destination and length are needed.' });
 

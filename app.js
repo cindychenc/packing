@@ -510,6 +510,9 @@
           return h('div', { class: 'ro' + (on ? ' on' : ''), role: 'button', tabindex: '0', 'aria-pressed': String(on),
             onclick: () => { if (!on) { st.cur = k; draw(); } }, onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); st.cur = k; draw(); } } },
             h('span', { class: 'ro-top' }, h('strong', { class: 'ro-nm' }, NT.tidy(r.name)), r.tag ? h('span', { class: 'ro-tag' }, NT.tidy(r.tag)) : null),
+            (() => { const a = x.stops[0], b = x.stops[x.stops.length - 1]; if (!a || !b) return null;
+              const loop = r.shape === 'loop' || a.place === b.place;
+              return h('span', { class: 'ro-shape' }, loop ? '↻ Loop · in and out of ' + a.place : '↗ Open-jaw · into ' + a.place + ', out of ' + b.place); })(),
             h('span', { class: 'ro-pitch' }, NT.tidy(r.pitch)),
             on ? h('span', { class: 'ro-more' },
               (r.best_for || []).length ? h('span', { class: 'ro-best' }, 'Best for: ' + r.best_for.map(NT.tidy).join(', ')) : null,

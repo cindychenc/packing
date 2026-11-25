@@ -401,6 +401,7 @@ details.archived summary::-webkit-details-marker { display: none; }
 .ro-top { display: flex; align-items: center; gap: 10px; }
 .ro-nm { font-size: 18px; }
 .ro-tag { font-size: 12px; font-weight: 600; color: var(--text2); background: var(--fill); border-radius: 999px; padding: 2px 8px; margin-left: auto; white-space: nowrap; }
+.ro-shape { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text3); margin-top: -4px; }
 .ro-pitch { font-size: 14px; color: var(--text2); }
 .ro-more { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid #EEE; animation: fade .3s ease-out; }
 .ro-best { font-size: 13px; font-weight: 600; }
