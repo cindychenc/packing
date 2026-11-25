@@ -80,7 +80,7 @@
   function modal(build) {
     const scrim = h('div', { class: 'scrim', onmousedown: e => { if (e.target === scrim) close(); } });
     const box = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' });
-    const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey); };
+    const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey); if (box.onClose) box.onClose(); };
     const onKey = e => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', onKey);
     build(box, close);
@@ -266,6 +266,20 @@
   };
   const hlIcon = (k, size) => '<svg viewBox="0 0 24 24" width="' + (size || 20) + '" height="' + (size || 20) + '" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + (HL_ICONS[k] || HL_ICONS.other) + '"/></svg>';
 
+  /* Mapbox GL JS, loaded the first time a route map is shown (it's ~2 MB). Tests set SUITCASE_MAP_FAKE to skip it. */
+  let glReady = null;
+  function loadGL() {
+    if (window.SUITCASE_MAP_FAKE) return Promise.reject(new Error('fake'));
+    if (!glReady) glReady = new Promise((res, rej) => {
+      const css = h('link', { rel: 'stylesheet', href: 'lib/mapbox-gl-3.35.2.css' });
+      const js = h('script', { src: 'lib/mapbox-gl-3.35.2.js' });
+      js.onload = () => (window.mapboxgl ? res(window.mapboxgl) : rej(new Error('no mapboxgl')));
+      js.onerror = () => { glReady = null; rej(new Error('Mapbox didn\'t load')); };
+      document.head.append(css, js);
+    });
+    return glReady;
+  }
+
   function newTripModal() {
     const st = { step: 'where', dest: '', picks: [], mode: null, unit: null, months: 1, start: '', end: '', cal: null, seasons: [],
       ans: { loves: [], who: null, pace: null, fitness: null, shape: 'any', from: '', to: '', must: '', avoid: '' }, more: false, fopen: null,
@@ -439,6 +453,27 @@
         const field = (k, label, ph, area) => h('label', { class: 'fxg' }, label ? h('span', { class: 'fxl' }, label) : null,
           h(area ? 'textarea' : 'input', { class: 'fin' + (area ? ' fta' : ''), placeholder: ph, 'aria-label': label || ph, maxlength: area ? 300 : 80, value: a[k] || '',
             oninput: e => { a[k] = e.target.value; } }));
+        // start and end points: the same place suggestions as step 1
+        const placeField = (k, label, ph) => {
+          const inp = h('input', { class: 'fin', placeholder: ph, 'aria-label': label, maxlength: 80, value: a[k] || '', autocomplete: 'off',
+            role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false' });
+          const list = h('div', { class: 'ac hidden', role: 'listbox' });
+          let items = [], i = 0, seq = 0, timer = null;
+          const paint = () => { const open = document.activeElement === inp && items.length > 0;
+            list.classList.toggle('hidden', !open); inp.setAttribute('aria-expanded', String(open));
+            list.replaceChildren(...items.map((it, k2) => h('button', { type: 'button', class: 'ac-i' + (k2 === i ? ' on' : ''), role: 'option', 'aria-selected': String(k2 === i),
+              onmousedown: e => { e.preventDefault(); pick(it); } }, h('strong', null, it.name), it.label ? h('span', { class: 'muted' }, it.label) : null))); };
+          const pick = it => { inp.value = it.name; a[k] = it.name; items = []; paint(); };
+          inp.addEventListener('input', () => { a[k] = inp.value; clearTimeout(timer); const my = ++seq;
+            timer = setTimeout(async () => { const r = inp.value.trim() ? await PLACES.suggest(inp.value.trim()) : []; if (my !== seq) return; items = r; i = 0; paint(); }, 250); });
+          inp.addEventListener('keydown', e => { const open = !list.classList.contains('hidden');
+            if (e.key === 'ArrowDown' && open) { e.preventDefault(); i = (i + 1) % items.length; paint(); }
+            else if (e.key === 'ArrowUp' && open) { e.preventDefault(); i = (i - 1 + items.length) % items.length; paint(); }
+            else if (e.key === 'Enter' && open) { e.preventDefault(); pick(items[i]); }
+            else if (e.key === 'Escape' && open) { e.stopPropagation(); items = []; paint(); } });
+          inp.addEventListener('blur', () => setTimeout(paint, 150));
+          return h('div', { class: 'fxg' }, h('span', { class: 'fxl' }, label), h('span', { class: 'ac-wrap' }, inp, list));
+        };
         const clip = t => t.length > 34 ? t.slice(0, 33) + '…' : t;
         const fold = (id, title, summary, kids) => { const open = st.fopen === id;
           return h('div', { class: 'fsec fx' }, h('button', { type: 'button', class: 'fxh', 'aria-expanded': String(open), onclick: () => { st.fopen = open ? null : id; draw(); } },
@@ -456,9 +491,9 @@
           sec('How active?', h('div', { class: 'fpills' }, F.fitness.map(label => { const v = label.toLowerCase(); return pill(label, FI[label], a.fitness === v, () => set('fitness', a.fitness === v ? null : v)); }))),
           fold('ends', 'Start and end points', ends, [
             h('div', { class: 'fxg' }, h('span', { class: 'fxl' }, 'Where it ends'), h('div', { class: 'fseg', role: 'group', 'aria-label': 'Route shape' }, F.shape.map(([v, label]) => segBtn(label, shape === v, () => set('shape', v))))),
-            field('from', 'Starting in', 'A city, airport or border crossing'),
-            shape === 'loop' ? null : field('to', 'Ending in', 'Where you fly home from')]),
-          fold('must', 'Anything you must do?', (a.must || '').trim(), field('must', '', 'For example: the W Trek, a night in a yurt, Perito Moreno glacier', true)),
+            placeField('from', 'Starting in', 'A city, airport or border crossing'),
+            shape === 'loop' ? null : placeField('to', 'Ending in', 'Where you fly home from')]),
+          fold('must', 'Anything you must do?', (a.must || '').trim(), field('must', '', 'For example: a multi-day hike, a cooking class, one special night somewhere', true)),
           fold('avoid', 'Anything to avoid?', (a.avoid || '').trim(), field('avoid', '', 'For example: long bus days, big cities, early starts', true))];
       }
       function drawFoot2() {
@@ -473,7 +508,7 @@
         const ask = NT.request(st.ans, ctx());
         const { data, error } = await sb.functions.invoke('draft-trip', { body: ask });
         if (!error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes.length) {
-          try { st.draft = data.draft; st.routes = await prepareRoutes(data.draft.routes); st.busy = false; st.cur = 0; st.tw = null; go('routes'); return; }
+          try { st.draft = data.draft; dropMaps(st.routes); st.routes = await prepareRoutes(data.draft.routes); st.busy = false; st.cur = 0; st.tw = null; go('routes'); return; }
           catch (e) { console.warn(e); }
         }
         st.busy = false; go('sentence');
@@ -520,7 +555,7 @@
         st.redraw = null;
         const got = !error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes[0];
         if (got) {
-          try { const [nx] = await prepareRoutes([got]); nx.tweak = text; st.routes[k] = nx; st.twText = ''; if (st.step === 'routes') draw(); return; }
+          try { const [nx] = await prepareRoutes([got]); nx.tweak = text; dropMaps([st.routes[k]]); st.routes[k] = nx; st.twText = ''; if (st.step === 'routes') draw(); return; }
           catch (e) { console.warn(e); }
         }
         st.tw = k; draw(); showErr(await errorOf(error, 'Couldn\'t redraw that route just now. Try again in a minute.'));
@@ -534,8 +569,7 @@
           if (st.view === 'list') return h('div', { class: 'cx-pl' }, NT.phaseList(x.r.phases, (x.r.highlights || []).concat(st.draft.shared || [])).map(g => h('div', null,
             h('div', { class: 'cx-pgh' }, g.name || 'Phase', h('span', null, plural(g.days, 'day'))),
             g.stops.map(t => h('div', { class: 'cx-ps' }, h('span', { class: 'pd' }, plural(t.nights, 'day')), h('span', null, h('b', null, t.place), t.what ? h('i', null, t.what) : null))))));
-          const url = PLACES.staticMap(x.stops, 300, 170, { curve: true });
-          return url ? h('img', { class: 'cx-map', src: url, alt: 'Map of ' + NT.tidy(x.r.name), width: 300, height: 170, loading: 'lazy' }) : h('div', { class: 'cx-map none' });
+          return routeMap(x);
         };
         const tweakCell = (x, k) => {
           if (k !== st.cur) return null;
@@ -567,6 +601,48 @@
                 return x.r.shape === 'loop' || a.place === b.place ? 'Loop from ' + a.place : 'Into ' + a.place + ', out of ' + b.place; })())),
             row('', 'ft', tweakCell))];
       }
+      /* One Mapbox GL map per route, kept with the route so picking a column or switching Map/List doesn't rebuild it.
+         Without GL (no WebGL, or the tests) each route gets a still image instead. */
+      let glFailed = false;
+      function routeMap(x) {
+        if (x.mapEl) { if (x.gl) setTimeout(() => x.gl.resize(), 0); return x.mapEl; }
+        const el = x.mapEl = h('div', { class: 'cx-map', 'aria-label': 'Map of ' + NT.tidy(x.r.name), role: 'img' });
+        const still = () => { const url = PLACES.staticMap(x.stops, 360, 200, { curve: true });
+          el.replaceChildren(url ? h('img', { class: 'cx-img', src: url, alt: 'Map of ' + NT.tidy(x.r.name), width: 360, height: 200, loading: 'lazy' }) : ''); };
+        const pts = x.stops.filter(s => s.lat != null);
+        if (glFailed || !pts.length) { still(); return el; }
+        loadGL().then(mb => {
+          if (!el.isConnected) { x.mapEl = null; return; }   // moved on before the map code arrived
+          mb.accessToken = CFG.mapboxToken;
+          const m = x.gl = new mb.Map({ container: el, style: 'mapbox://styles/mapbox/light-v11', bounds: boundsOf(pts), fitBoundsOptions: { padding: 30, maxZoom: 9 },
+            dragRotate: false, pitchWithRotate: false, cooperativeGestures: true, attributionControl: false });
+          m.addControl(new mb.NavigationControl({ showCompass: false }), 'top-right');
+          m.addControl(new mb.AttributionControl({ compact: true }), 'bottom-right');
+          const legs = [];
+          x.stops.forEach((s, i) => { const t = x.stops[i + 1]; if (t && s.lat != null && t.lat != null)
+            legs.push({ type: 'Feature', properties: { fly: s.next === 'fly' }, geometry: { type: 'LineString', coordinates: PLACES.curved([s, t]).map(p => [p[1], p[0]]) } }); });
+          const pins = pts.map((s, i) => ({ type: 'Feature', properties: { c: s.colour, end: i === 0 || i === pts.length - 1, name: s.place }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
+          m.on('load', () => {
+            m.addSource('legs', { type: 'geojson', data: { type: 'FeatureCollection', features: legs } });
+            m.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: pins } });
+            m.addLayer({ id: 'legs', type: 'line', source: 'legs', filter: ['!', ['get', 'fly']], paint: { 'line-color': '#3F5675', 'line-width': 2.5 }, layout: { 'line-cap': 'round' } });
+            m.addLayer({ id: 'legs-fly', type: 'line', source: 'legs', filter: ['get', 'fly'], paint: { 'line-color': '#3F5675', 'line-width': 2, 'line-dasharray': [2, 2] } });
+            m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': ['case', ['get', 'end'], 6, 4.5], 'circle-color': ['get', 'c'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+            m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
+              paint: { 'text-color': '#222', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
+          });
+        }).catch(e => { glFailed = true; if (!/fake/.test(e.message || '')) console.warn('map', e); still(); });
+        return el;
+      }
+      const boundsOf = pts => {
+        let a = [180, 90], b = [-180, -90];
+        pts.forEach(p => { a = [Math.min(a[0], p.lng), Math.min(a[1], p.lat)]; b = [Math.max(b[0], p.lng), Math.max(b[1], p.lat)]; });
+        if (a[0] === b[0] && a[1] === b[1]) { a = [a[0] - 1, a[1] - 1]; b = [b[0] + 1, b[1] + 1]; }
+        return [a, b];
+      };
+      const dropMaps = list => (list || []).forEach(x => { if (x.gl) { x.gl.remove(); x.gl = null; } x.mapEl = null; });
+      box.onClose = () => dropMaps(st.routes);
+
       function drawFoot3() {
         const x = st.routes[st.cur], idle = st.tw !== st.cur && st.redraw === null;
         setFoot(h('button', { type: 'button', class: 'btn', onclick: () => { st.tw = null; go('sentence'); } }, '‹ Back to your answers'),
@@ -703,7 +779,7 @@
           const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
           pendingStop = one;
         }
-        close(); location.hash = '#/trip/' + data.id;
+        close(); location.hash = '#/trip/' + data.id;   // close() also removes the route maps
       }
 
       // Escape closes the calendar or the tweak box before it closes the pop-up.

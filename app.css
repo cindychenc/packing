@@ -301,7 +301,7 @@ details.archived summary::-webkit-details-marker { display: none; }
 /* ---------- new trip pop-up (680 × 680, grows to 980 × 820 for the routes) ---------- */
 .modal.newtrip { position: relative; max-width: 680px; height: min(680px, calc(100vh - 48px)); padding: 0; display: flex; flex-direction: column;
   transition: max-width .5s cubic-bezier(.2,.8,.2,1), height .5s cubic-bezier(.2,.8,.2,1); }
-.modal.newtrip.big { max-width: 980px; height: min(820px, calc(100vh - 48px)); }
+.modal.newtrip.big { max-width: 1184px;   /* main's content width (1240 − 2 × 28) */ height: min(820px, calc(100vh - 48px)); }
 .nt-x { position: absolute; top: 16px; right: 16px; z-index: 2; width: 36px; height: 36px; border-radius: 18px; border: 0; background: var(--fill); font-size: 20px; cursor: pointer; color: var(--ink); }
 .nt-x:hover { background: #E8E8E8; }
 .nt-lbl { display: block; padding: 30px 36px 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); }
@@ -410,7 +410,9 @@ details.archived summary::-webkit-details-marker { display: none; }
 .cx-radio { width: 18px; height: 18px; border-radius: 9px; border: 2px solid #BDBDBD; flex: none; box-sizing: border-box; }
 .cx-c.on .cx-radio { border: 6px solid var(--ink); }
 .cx-tag { font-size: 12px; font-weight: 600; color: var(--ok); background: var(--ok-tint); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
-.cx-map { display: block; width: 100%; height: 150px; object-fit: cover; background: #DCE8EF; }
+.cx-map { display: block; position: relative; width: 100%; height: 200px; background: #DCE8EF; overflow: hidden; }
+.cx-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.cx-map .mapboxgl-ctrl-group button { width: 26px; height: 26px; }
 .cx-map.none { display: grid; place-items: center; }
 .cx-only { font-size: 14px; line-height: 1.4; }
 .cx-hl { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: #333; line-height: 1.35; }
