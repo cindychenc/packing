@@ -30,7 +30,7 @@ export const LONG_TRIP_DAYS = 45;
 export type Ask = {
   destination: string; days: number; start: string | null; who: string | null; loves: string[]; pace: string | null;
   when: string | null; from: string | null; to: string | null; must: string[]; avoid: string | null;
-  shape: 'loop' | 'open' | null;
+  shape: 'loop' | 'open' | null; fitness: string | null;
 };
 
 // Nights per stop for each pace answer; anything typed gets a middle range.
@@ -53,6 +53,7 @@ function about(r: Ask): string[] {
     `Loves: ${r.loves.length ? r.loves.join('; ') : 'anything'}`,
     `Pace: ${r.pace ?? 'steadily'}`,
   ];
+  if (r.fitness) lines.push(`How active: ${r.fitness}`);
   if (r.from) lines.push(`Start point: ${r.from}`);
   if (r.to) lines.push(`End point: ${r.to}`);
   if (r.shape === 'loop') lines.push('Route shape: back where they started (a loop)');
@@ -103,6 +104,9 @@ Highlights:
 - Give each route 3–4 highlights: what makes this route different from the other two. Name the town each one happens in ("place").
 - Tie a highlight to one of the traveller's interests or must-dos when it comes from one (the "because" field, copied word for word).
   Their pace and who's going don't count here.
+- How active they are sets the walking: casual walks means short, easy walks; day hikes means full-day trails back to a bed;
+  multi-day treks means overnight treks with gear; big adventures means hard routes, high passes or glaciers. Not said: a mix.
+- "only": one line on what only this route has, compared with the other two.
 - The last highlight of each route is its main trade-off: what it gives up compared to the others ("Skips the glacier day"), with skip set to true.
 - Also list 1–2 highlights that all three routes share, each with the town it happens in.
 
@@ -113,6 +117,7 @@ Lengths:
 - route name: 2–4 plain words ("Lakes & granite", "The big treks", "Road trip").
 - tag: 1–3 words that set it apart ("Easiest to plan", "Quietest", "Most remote").
 - pitch: 1–2 sentences, at most 35 words.
+- only: 1 sentence, at most 14 words ("Perito Moreno glacier walk, and the fewest travel days.").
 - best_for: 2–3 of the traveller's interests or must-dos, copied word for word.
 - highlight: under 8 words, noun first ("Perito Moreno glacier walk"). Trade-off: "Skips …" plus 2–4 words.
 
@@ -151,12 +156,13 @@ export const OUTLINE_TOOL = {
       routes: {
         type: 'array', minItems: 3, maxItems: 3,
         items: {
-          type: 'object', required: ['name', 'tag', 'pitch', 'shape', 'best_for', 'highlights', 'phases'],
+          type: 'object', required: ['name', 'tag', 'pitch', 'only', 'shape', 'best_for', 'highlights', 'phases'],
           properties: {
             name: { type: 'string' },
             shape: { type: 'string', enum: ['loop', 'open'], description: 'loop: ends where it starts; open: ends somewhere else (open-jaw).' },
             tag: { type: 'string' },
             pitch: { type: 'string' },
+            only: { type: 'string', description: 'What only this route has, compared with the other two. At most 14 words.' },
             best_for: { type: 'array', items: { type: 'string' }, maxItems: 3 },
             highlights: { type: 'array', minItems: 2, maxItems: 4, items: highlight },
             phases: {
@@ -276,3 +282,24 @@ export const STOPS_TOOL = {
     },
   },
 };
+
+/* ───────── "Tweak this route": one route again, changed the way the traveller asked ───────── */
+
+// The outline tool, for a single route (description and shared highlights aren't redone).
+export const TWEAK_TOOL = (() => {
+  const t = JSON.parse(JSON.stringify(OUTLINE_TOOL));
+  t.name = 'redo_route'; t.description = 'Return the one changed route.';
+  t.input_schema.required = ['routes'];
+  t.input_schema.properties.routes.minItems = 1; t.input_schema.properties.routes.maxItems = 1;
+  return t;
+})();
+export type Draft = { name: string; tag?: string; pitch?: string; shape?: string; phases: { name: string; days: number; stops: { place: string; nights: number }[] }[] };
+export function tweakMessage(r: Ask, route: Draft, change: string): string {
+  const now = route.phases.map((p, i) => `${i + 1}. ${p.name}: ${p.days} days. ${p.stops.map((s) => `${s.place} (${s.nights})`).join(', ')}`);
+  return [...about(r), '',
+    `Here is one of the three routes you gave them, "${route.name}"${route.tag ? ` (${route.tag})` : ''}:`, ...now, '',
+    `They want this changed: ${change}`, '',
+    'Give back just this one route with that change made. Keep the rest as close to the route above as you can, keep its name unless the change makes it wrong,',
+    `and keep the days adding up to exactly ${r.days}. Use the redo_route tool.`, '',
+    NOTE + ' The change they typed counts as one of their wishes too.'].join('\n');
+}

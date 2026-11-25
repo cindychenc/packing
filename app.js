@@ -266,23 +266,10 @@
   };
   const hlIcon = (k, size) => '<svg viewBox="0 0 24 24" width="' + (size || 20) + '" height="' + (size || 20) + '" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + (HL_ICONS[k] || HL_ICONS.other) + '"/></svg>';
 
-  /* Mapbox GL JS, loaded the first time a route map is shown (it's ~2 MB). Tests set SUITCASE_MAP_FAKE to skip it. */
-  let glReady = null;
-  function loadGL() {
-    if (window.SUITCASE_MAP_FAKE) return Promise.reject(new Error('fake'));
-    if (!glReady) glReady = new Promise((res, rej) => {
-      const css = h('link', { rel: 'stylesheet', href: 'lib/mapbox-gl-3.35.2.css' });
-      const js = h('script', { src: 'lib/mapbox-gl-3.35.2.js' });
-      js.onload = () => (window.mapboxgl ? res(window.mapboxgl) : rej(new Error('no mapboxgl')));
-      js.onerror = () => { glReady = null; rej(new Error('Mapbox didn\'t load')); };
-      document.head.append(css, js);
-    });
-    return glReady;
-  }
-
   function newTripModal() {
-    const st = { step: 'where', dest: '', picks: [], mode: null, unit: null, months: 1, start: '', end: '', cal: null,
-      ans: { added: [] }, open: null, busy: false, routes: null, cur: 0, imp: { text: '', file: null, plan: null, msg: null } };
+    const st = { step: 'where', dest: '', picks: [], mode: null, unit: null, months: 1, start: '', end: '', cal: null, seasons: [],
+      ans: { loves: [], who: null, pace: null, fitness: null, shape: 'any', from: '', to: '', must: '', avoid: '' }, more: false, fopen: null,
+      busy: false, routes: null, cur: 0, view: 'map', tw: null, twText: '', redraw: null, imp: { text: '', file: null, plan: null, msg: null } };
     modal((box, close) => {
       box.classList.add('newtrip');
       const err = h('div', { class: 'notice warn hidden', role: 'alert' });
@@ -408,7 +395,9 @@
                   () => { st.months = Math.max(1, st.months - 1); draw(); }, () => { st.months = Math.min(24, st.months + 1); draw(); }, st.months <= 1, st.months >= 24))
               : h('button', { type: 'button', class: 'len-pill', 'aria-pressed': 'false', onclick: () => { st.unit = 'month'; draw(); } }, 'Months'));
         } else if (st.mode === 'exact') inner = rangePart();
-        return [h('div', { class: 'q' }, 'Do you know your dates yet?'), h('div', { class: 'seg' }, seg('rough', 'Not yet'), seg('exact', 'Yes, I do')), inner];
+        const when = st.mode === 'rough' ? [h('div', { class: 'q nt-when' }, 'Roughly when?'),
+          h('div', { class: 'fpills' }, NT.FORM.seasons.map(([v, label]) => pill(label, FI[v], st.seasons.indexOf(v) >= 0, () => { st.seasons = NT.pickSeason(st.seasons, v); draw(); })))] : [];
+        return [h('div', { class: 'q' }, 'Do you know your dates yet?'), h('div', { class: 'seg' }, seg('rough', 'Not yet'), seg('exact', 'Yes, I do')), inner, ...when];
       }
       function drawFoot1() {
         const ready = destOk() && datesOk();
@@ -417,77 +406,94 @@
             h('button', { type: 'button', class: 'btn primary', disabled: !ready, onclick: () => go('sentence') }, 'Next →')]);
       }
 
-      /* ── step 2: finish the sentence ── */
-      const ctx = () => ({ dest: destName(), days: lengthOf(), start: st.mode === 'exact' ? st.start : null, exactDates: st.mode === 'exact',
-        lengthText: st.mode === 'exact' ? NT.lengthText(lengthOf(), null) : NT.lengthText(lengthOf(), unitLabel()),
-        places: st.picks.filter(p => p.kind === 'place').map(p => p.name) });
-      function setAns(id, v, keepOpen) { st.ans[id] = v; if (!keepOpen) st.open = null; draw(); }
-      function sentencePart() {
-        const c = ctx(), a = st.ans;
-        const toks = NT.tokens(a, c).map(t => {
-          if (t.text) return h('span', null, t.text);
-          const id = t.blank, def = NT.BLANKS[id], open = st.open === id, multi = !!def.multi;
-          const cur = a[id], list = multi ? (cur || []) : [];
-          const blank = h('button', { type: 'button', class: 'blank' + (t.filled ? '' : ' unset') + (open ? ' open' : ''), 'aria-expanded': String(open),
-            'aria-label': def.q + (t.filled ? ': ' + t.label : ''), onclick: () => { st.open = open ? null : id; draw(); } }, t.label);
-          if (!open) return blank;
-          const opts = NT.optionsFor(id, c);
-          (multi ? list : (cur ? [cur] : [])).forEach(v => { if (opts.indexOf(v) < 0) opts.push(v); });
-          const pick = v => {
-            if (multi) setAns(id, list.indexOf(v) >= 0 ? list.filter(z => z !== v) : list.concat([v]), true);
-            else setAns(id, cur === v ? null : v, cur === v);
-          };
-          const own = h('input', { class: 'own', placeholder: 'Type your own…', 'aria-label': 'Type your own: ' + def.q, maxlength: 80,
-            onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); const v = own.value.trim(); if (v && !(multi ? list.indexOf(v) >= 0 : cur === v)) pick(v); else if (!v && multi) { st.open = null; draw(); } }
-              if (e.key === 'Escape') { e.stopPropagation(); st.open = null; draw(); } } });
-          const pills = h('span', { class: 'inl', role: 'group', 'aria-label': def.q },
-            opts.map(v => { const on = multi ? list.indexOf(v) >= 0 : cur === v;
-              return h('button', { type: 'button', class: 'io' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => pick(v) }, v); }),
-            own,
-            multi ? h('button', { type: 'button', class: 'okc', 'aria-label': 'Done', title: 'Done', onclick: () => { st.open = null; draw(); } },
-              svg('<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>')) : null);
-          setTimeout(() => { if (!opts.length || document.activeElement === document.body) own.focus(); }, 0);
-          return (multi || !t.filled) ? pills : [blank, ' ', pills];
-        });
-        const extras = NT.extrasFor(c, a.added || []);
-        return [h('div', { class: 'nt-ttl' }, 'Tell us about the trip'), h('p', { class: 'sent' }, toks),
-          extras.length ? h('div', { class: 'tray' }, h('div', { class: 'q' }, 'Add more detail ', h('span', { class: 'muted' }, '(optional)')),
-            h('div', { class: 'len-pills' }, extras.map(e => h('button', { type: 'button', class: 'addc', onclick: () => { st.ans.added = (st.ans.added || []).concat([e[0]]); st.open = e[0]; draw(); } }, '+ ' + e[1])))) : null];
+      /* ── step 2: the form (every answer optional) ── */
+      const ctx = () => ({ dest: destName(), days: lengthOf(), start: st.mode === 'exact' ? st.start : null, exactDates: st.mode === 'exact', seasons: st.seasons });
+      // icons for the pills and cards (24×24 line drawings)
+      const FI = {
+        'outdoor adventure': 'M3 19l6-10 4 6 2-3 6 7H3zM8 11l1.5 1.5L11 11', 'city culture': 'M4 20V9l5-3v14M9 20V4h7v16M16 20v-9h4v9M3 20h18M12 8h1M12 11h1M12 14h1',
+        'food scene': 'M7 3v8a2 2 0 0 0 4 0V3M9 11v10M16 3c-1.7 0-3 2.2-3 5s1.3 4 3 4v9',
+        'local communities': 'M8 8m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M16 8m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M3 20c0-2.8 2.2-5 5-5s5 2.2 5 5M11 20c0-2.8 2.2-5 5-5s5 2.2 5 5',
+        'remote landscapes': 'M2 19l5-11 3 6 2-8 3 8 2-4 5 9zM2 19h20', 'unusual historical sites': 'M3 21h18M5 21V11h3v10M10 21V8h4v13M16 21v-8h3v8M4 8l3-3M14 5l4 3',
+        markets: 'M4 9l1-5h14l1 5M4 9h16v11H4zM4 9c0 2 3.5 2 4 0 .5 2 3.5 2 4 0 .5 2 3.5 2 4 0 .5 2 4 2 4 0M10 20v-5h4v5', cooking: 'M4 11h16v3a6 6 0 0 1-6 6h-4a6 6 0 0 1-6-6zM2 11h20M9 7c0-1.5 1-1.5 1-3M14 7c0-1.5 1-1.5 1-3',
+        history: 'M6 4h11a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M6 4a2 2 0 0 0-2 2v1h3M9 9h7M9 13h7M9 17h4', architecture: 'M4 20V9l5-3v14M9 20V4h7v16M16 20v-9h4v9M3 20h18',
+        photography: 'M4 8h3l2-3h6l2 3h3v11H4zM12 13.5m-3.5 0a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0', 'off the beaten path': 'M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M15.5 8.5l-2 5-5 2 2-5z',
+        museums: 'M4 20h16M5 9h14M12 4l8 5H4zM7 9v11M12 9v11M17 9v11', 'beach days': 'M3 15c2 0 2-2 4.5-2S10 15 12 15s2-2 4.5-2S19 15 21 15M3 19c2 0 2-2 4.5-2S10 19 12 19s2-2 4.5-2S19 19 21 19M17 5m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+        nightlife: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
+        'Slow and immersive': 'M12 12m-8 0a8 8 0 1 0 16 0a8 8 0 1 0-16 0M12 8v4l2 2', Balanced: 'M3 12h4l2-4 4 8 2-4h6', 'Fast-paced': 'M4 17l5-5-5-5M11 17l5-5-5-5M18 7v10',
+        'Casual walks': 'M13 4m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M10 21l2-6 2 2v4M12 15l-1-5 3-1 2 3h2M11 10l-3 2v3', 'Day hikes': 'M3 19l6-10 4 6 2-3 6 7H3zM8 11l1.5 1.5L11 11',
+        'Multi-day treks': 'M3 20L12 5l9 15zM12 5v15M9 20l3-5 3 5', 'Big adventures': 'M2 20l7-13 3 5 2-3 8 11zM9 7l1.5 3M16 6V2l3 1-3 1',
+        spring: 'M12 20v-8M12 12c-3 0-5-2-5-5 3 0 5 2 5 5zm0 0c3 0 5-2 5-5-3 0-5 2-5 5z', summer: 'M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4',
+        fall: 'M6 18C6 10 11 5 19 5c0 8-5 13-13 13zM6 18l6-6M6 18l-2 2', winter: 'M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M10 4.5l2 2 2-2M10 19.5l2-2 2 2',
+        unsure: 'M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.5M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0',
+        down: 'M6 9l6 6 6-6', up: 'M6 15l6-6 6 6', pen: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4'
+      };
+      const ico = (d, n) => svg('<svg viewBox="0 0 24 24" width="' + (n || 20) + '" height="' + (n || 20) + '" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + (d || '') + '"/></svg>');
+      const pill = (label, icon, on, fn) => h('button', { type: 'button', class: 'fp' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: fn }, icon ? ico(icon) : null, label);
+      const segBtn = (label, on, fn) => h('button', { type: 'button', class: 'fsg' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: fn }, label);
+      const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+      function formPart() {
+        const a = st.ans, F = NT.FORM, set = (k, v) => { a[k] = v; draw(); };
+        const shown = st.more ? F.loves : F.loves.filter((v, k) => k < F.shown || a.loves.indexOf(v) >= 0);
+        const sec = (title, kids, extra) => h('div', { class: 'fsec' + (extra || '') }, title ? h('div', { class: 'fh' }, title) : null, kids);
+        // text answers save as you type, without a redraw (keeps the cursor)
+        const field = (k, label, ph, area) => h('label', { class: 'fxg' }, label ? h('span', { class: 'fxl' }, label) : null,
+          h(area ? 'textarea' : 'input', { class: 'fin' + (area ? ' fta' : ''), placeholder: ph, 'aria-label': label || ph, maxlength: area ? 300 : 80, value: a[k] || '',
+            oninput: e => { a[k] = e.target.value; } }));
+        const clip = t => t.length > 34 ? t.slice(0, 33) + '…' : t;
+        const fold = (id, title, summary, kids) => { const open = st.fopen === id;
+          return h('div', { class: 'fsec fx' }, h('button', { type: 'button', class: 'fxh', 'aria-expanded': String(open), onclick: () => { st.fopen = open ? null : id; draw(); } },
+            h('span', null, title, summary ? h('span', { class: 'fsum' }, ' · ' + clip(summary)) : null), ico(open ? FI.up : FI.down, 22)),
+            open ? h('div', { class: 'fxb' }, kids) : null); };
+        const shape = a.shape || 'any';
+        const ends = [shape === 'loop' ? 'loop' : shape === 'open' ? 'open-jaw' : '', a.from && 'from ' + a.from.trim(), shape !== 'loop' && a.to && 'to ' + a.to.trim()].filter(Boolean).join(', ');
+        return [h('div', { class: 'nt-ttl' }, 'Tell us about the trip'),
+          sec([h('span', null, 'Interests'), h('span', { class: 'fsub' }, 'Pick any')], [
+            h('div', { class: 'fpills' }, shown.map(v => pill(cap(v), FI[v], a.loves.indexOf(v) >= 0, () => set('loves', NT.toggle(a.loves, v))))),
+            F.loves.length > F.shown ? h('button', { type: 'button', class: 'fmore', onclick: () => { st.more = !st.more; draw(); } }, st.more ? 'Show less' : 'Show more', ico(st.more ? FI.up : FI.down, 16)) : null]),
+          sec('Who’s going', h('div', { class: 'fseg', role: 'group', 'aria-label': 'Who’s going' }, F.who.map(([label, v]) => segBtn(label, a.who === v, () => set('who', a.who === v ? null : v))))),
+          sec('Pace', h('div', { class: 'fcards' }, F.pace.map(([label, desc, v]) => h('button', { type: 'button', class: 'fc' + (a.pace === v ? ' on' : ''), 'aria-pressed': String(a.pace === v),
+            onclick: () => set('pace', a.pace === v ? null : v) }, ico(FI[label], 26), h('span', null, h('b', null, label), h('span', null, desc)))))),
+          sec('How active?', h('div', { class: 'fpills' }, F.fitness.map(label => { const v = label.toLowerCase(); return pill(label, FI[label], a.fitness === v, () => set('fitness', a.fitness === v ? null : v)); }))),
+          fold('ends', 'Start and end points', ends, [
+            h('div', { class: 'fxg' }, h('span', { class: 'fxl' }, 'Where it ends'), h('div', { class: 'fseg', role: 'group', 'aria-label': 'Route shape' }, F.shape.map(([v, label]) => segBtn(label, shape === v, () => set('shape', v))))),
+            field('from', 'Starting in', 'A city, airport or border crossing'),
+            shape === 'loop' ? null : field('to', 'Ending in', 'Where you fly home from')]),
+          fold('must', 'Anything you must do?', (a.must || '').trim(), field('must', '', 'For example: the W Trek, a night in a yurt, Perito Moreno glacier', true)),
+          fold('avoid', 'Anything to avoid?', (a.avoid || '').trim(), field('avoid', '', 'For example: long bus days, big cities, early starts', true))];
       }
       function drawFoot2() {
-        const miss = NT.missing(st.ans);
         setFoot([h('button', { type: 'button', class: 'btn', onclick: () => go('where') }, '‹ Back'),
           h('button', { type: 'button', class: 'link-btn empty-start', onclick: () => createTrip({ empty: true }) }, 'Or start with an empty trip')],
-          [h('span', { class: 'muted' }, miss.length ? plural(miss.length, 'blank') + ' left' : 'Next: three routes to compare.'),
-            h('button', { type: 'button', class: 'btn primary', disabled: miss.length > 0, onclick: buildRoutes }, 'See my options →')]);
+          h('button', { type: 'button', class: 'btn primary', onclick: buildRoutes }, 'See my options →'));
       }
 
-      /* ── step 3: three routes ── */
+      /* ── step 3: three routes, compared in a table ── */
       async function buildRoutes() {
-        hideErr(); st.busy = true; st.open = null; draw();
+        hideErr(); st.busy = true; st.fopen = null; draw();
         const ask = NT.request(st.ans, ctx());
         const { data, error } = await sb.functions.invoke('draft-trip', { body: ask });
         if (!error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes.length) {
-          try { await prepareRoutes(data.draft); st.busy = false; st.cur = 0; go('routes'); return; }
+          try { st.draft = data.draft; st.routes = await prepareRoutes(data.draft.routes); st.busy = false; st.cur = 0; st.tw = null; go('routes'); return; }
           catch (e) { console.warn(e); }
         }
         st.busy = false; go('sentence');
-        let m = 'Couldn\'t make routes just now. Try again, or start with an empty trip.';
-        try { const j = error && error.context && await error.context.json(); if (j && j.error) m = j.error; } catch (e) { /* keep the plain message */ }
-        showErr(m);
+        showErr(await errorOf(error, 'Couldn\'t make routes just now. Try again, or start with an empty trip.'));
       }
-      async function prepareRoutes(draft) {
+      async function errorOf(error, m) {
+        try { const j = error && error.context && await error.context.json(); if (j && j.error) m = j.error; } catch (e) { /* keep the plain message */ }
+        return m;
+      }
+      async function prepareRoutes(routes) {
         const total = lengthOf();
         const want = {};
-        draft.routes.forEach(r => r.phases.forEach(p => (p.stops || []).forEach(s => { s.place = String(s.place || '').trim(); want[s.place + '|' + (s.country || '')] = s; })));
+        routes.forEach(r => r.phases.forEach(p => (p.stops || []).forEach(s => { s.place = String(s.place || '').trim(); want[s.place + '|' + (s.country || '')] = s; })));
         const keys = Object.keys(want).slice(0, 40);
         const found = await Promise.all(keys.map(k => PLACES.lookup(want[k].place, want[k].country, { lat: want[k].lat, lng: want[k].lng })));
         const at = {}; keys.forEach((k, i) => { if (found[i]) at[k] = found[i]; });
-        st.draft = draft;
-        st.routes = draft.routes.map(r => {
+        return routes.map(r => {
           const fit = NT.fitNights(r.phases, total, NT.paceCap(st.ans.pace));
           const L = LAYOUT.fromDraft(r.phases, total).layout;
-          fillDays(L, NT.dayPlans(r.phases, (r.highlights || []).concat(draft.shared || [])));
+          fillDays(L, NT.dayPlans(r.phases, (r.highlights || []).concat(st.draft.shared || [])));
           const stops = [];
           r.phases.forEach((p, pi) => (p.stops || []).forEach(s => {
             const f = at[s.place + '|' + (s.country || '')] || {};
@@ -495,7 +501,7 @@
             stops.push({ place: s.place, n: s.nights, why: s.why, next: s.next || null, colour: lp ? lp.colour : '#3F5675', phase: lp ? lp.id : null,
               lat: f.lat, lng: f.lng, country: f.country || s.country, label: f.label });
           }));
-          return { r, layout: L, stops, left: fit.left };
+          return { r, layout: L, stops, left: fit.left, tweak: null };
         });
       }
       // Put the day-by-day lines into a new layout's days, in order (days past the planned ones stay empty).
@@ -503,104 +509,69 @@
         let k = 0;
         L.phases.forEach(p => p.days.forEach(d => { const x = lines[k++]; if (x) { d.plan = x.plan; d.notes = x.notes; } }));
       }
-      function routesPart() {
-        const R = st.routes, cur = R[st.cur];
-        const cards = R.map((x, k) => {
-          const on = k === st.cur, r = x.r;
-          return h('div', { class: 'ro' + (on ? ' on' : ''), role: 'button', tabindex: '0', 'aria-pressed': String(on),
-            onclick: () => { if (!on) { st.cur = k; draw(); } }, onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); st.cur = k; draw(); } } },
-            h('span', { class: 'ro-top' }, h('strong', { class: 'ro-nm' }, NT.tidy(r.name)), r.tag ? h('span', { class: 'ro-tag' }, NT.tidy(r.tag)) : null),
-            (() => { const a = x.stops[0], b = x.stops[x.stops.length - 1]; if (!a || !b) return null;
-              const loop = r.shape === 'loop' || a.place === b.place;
-              return h('span', { class: 'ro-shape' }, loop ? '↻ Loop · in and out of ' + a.place : '↗ Open-jaw · into ' + a.place + ', out of ' + b.place); })(),
-            h('span', { class: 'ro-pitch' }, NT.tidy(r.pitch)),
-            on ? h('span', { class: 'ro-more' },
-              (r.best_for || []).length ? h('span', { class: 'ro-best' }, 'Best for: ' + r.best_for.map(NT.tidy).join(', ')) : null,
-              h('span', { class: 'ro-hl' }, (r.highlights || []).map(hl => h('span', { class: 'hr' + (hl.skip ? ' minus' : '') }, svg(hlIcon(hl.kind)),
-                h('span', null, NT.tidy(hl.text), hl.because && !hl.skip ? h('span', { class: 'by' }, NT.tidy(hl.because)) : null)))),
-              h('span', { class: 'ro-stops muted' }, x.stops.map(s => s.place).join(' → ') + ' · ' + plural(x.stops.reduce((a, s) => a + s.n, 0), 'night') + (x.left ? ' · ' + plural(x.left, 'day') + ' left to plan' : '')),
-              h('button', { type: 'button', class: 'btn primary go', onclick: e => { e.stopPropagation(); createTrip({ route: x }); } }, 'Customize this plan →')) : null);
-        });
-        const tl = h('div', { class: 'tl small mtl' }, cur.layout.phases.map(p => h('div', { class: 'tl-ph on', style: { flex: p.days.length, background: p.colour } },
-          h('b', null, p.name || ''), h('span', null, plural(p.days.length, 'day')))),
-          cur.layout.free.length ? h('div', { class: 'tl-free', style: { flex: cur.layout.free.length } }, plural(cur.layout.free.length, 'day') + ' to plan') : null);
-        return [h('div', { class: 'rhdr' }, h('div', { class: 'nt-ttl' }, 'Three ways through ' + destName()), st.draft.description ? h('p', { class: 'lead' }, NT.tidy(st.draft.description)) : null),
-          h('div', { class: 'rgrid' }, h('div', { class: 'rmap' }, tl, mapBox), h('div', { class: 'ropts' }, cards))];
-      }
-
-      /* the route map: one Mapbox GL map, redrawn for the picked route */
-      const mapBox = h('div', { class: 'rmap-box' });
-      let gl = null, glMarks = [], glFailed = false;
-      const legend = () => h('div', { class: 'legend' }, h('span', { class: 'lg' }, h('i'), 'Bus / drive'), h('span', { class: 'lg' }, h('i', { class: 'fly' }), 'Flight'),
-        h('span', { class: 'lg' }, h('span', { class: 'bdg dk' }), 'In all three'), h('span', { class: 'lg' }, h('span', { class: 'bdg' }), 'This route only'));
-      function mapData(x) {
-        const pts = x.stops.filter(s => s.lat != null);
-        const legs = [];
-        x.stops.forEach((s, i) => { const t = x.stops[i + 1]; if (t && s.lat != null && t.lat != null) legs.push({ type: 'Feature', properties: { fly: s.next === 'fly' }, geometry: { type: 'LineString', coordinates: [[s.lng, s.lat], [t.lng, t.lat]] } }); });
-        const pins = pts.map((s, i) => ({ type: 'Feature', properties: { c: s.colour, end: i === 0 || i === pts.length - 1 }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
-        return { pts, legs: { type: 'FeatureCollection', features: legs }, pins: { type: 'FeatureCollection', features: pins } };
-      }
-      function badgesFor(x) {
-        const by = {}; x.stops.forEach(s => { if (s.lat != null) by[s.place.toLowerCase()] = s; });
-        const out = [];
-        (x.r.highlights || []).filter(hl => !hl.skip && hl.place && by[hl.place.toLowerCase()]).forEach(hl => out.push({ s: by[hl.place.toLowerCase()], kind: hl.kind, dark: false, text: hl.text }));
-        (st.draft.shared || []).filter(hl => hl.place && by[hl.place.toLowerCase()]).forEach(hl => out.push({ s: by[hl.place.toLowerCase()], kind: hl.kind, dark: true, text: hl.text }));
-        return out;
-      }
-      let glInit = null;
-      function initMap(d) {
-        mapBox.replaceChildren(h('div', { class: 'rmap-gl' }), legend());
-        return loadGL().then(mb => new Promise((res, rej) => {
-          mb.accessToken = CFG.mapboxToken;
-          const m = new mb.Map({ container: mapBox.firstChild, style: 'mapbox://styles/mapbox/light-v11', bounds: boundsOf(d.pts), fitBoundsOptions: { padding: 60 },
-            dragRotate: false, pitchWithRotate: false });
-          m.addControl(new mb.NavigationControl({ showCompass: false }), 'bottom-right');
-          m.on('error', e => { if (!m.loaded()) rej(e.error || new Error('map error')); });
-          m.on('load', () => {
-            m.addSource('legs', { type: 'geojson', data: d.legs }); m.addSource('pins', { type: 'geojson', data: d.pins });
-            m.addLayer({ id: 'legs', type: 'line', source: 'legs', filter: ['!', ['get', 'fly']], paint: { 'line-color': '#3F5675', 'line-width': 3 }, layout: { 'line-cap': 'round' } });
-            m.addLayer({ id: 'legs-fly', type: 'line', source: 'legs', filter: ['get', 'fly'], paint: { 'line-color': '#3F5675', 'line-width': 2.5, 'line-dasharray': [2, 2] } });
-            m.addLayer({ id: 'pin-ring', type: 'circle', source: 'pins', filter: ['get', 'end'], paint: { 'circle-radius': 13, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#222', 'circle-stroke-width': 2 } });
-            m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': ['case', ['get', 'end'], 8, 6], 'circle-color': ['get', 'c'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 } });
-            gl = m; res(m);
-          });
-        })).catch(e => { glFailed = true; if (!/fake/.test(e.message || '')) console.warn('map', e); });
-      }
-      async function paintMap() {
-        const x = st.routes[st.cur], d = mapData(x);
-        if (!glFailed && !glInit) glInit = initMap(d);
-        if (!glFailed) await glInit;
-        if (st.step !== 'routes' || x !== st.routes[st.cur]) return;   // moved on while the map loaded
-        if (glFailed) {   // fall back to a still image
-          const url = PLACES.staticMap(x.stops, 520, 520);
-          mapBox.replaceChildren(url ? h('img', { class: 'rmap-img', src: url, alt: 'Map of ' + x.r.name, width: 520, height: 520 }) : h('div', { class: 'rmap-img empty' }), legend());
-          return;
+      /* "Tweak this route": draft-trip redraws just that one route with the change typed in. */
+      async function redraw(k) {
+        const text = st.twText.trim(); if (!text) { st.tw = null; draw(); return; }
+        const x = st.routes[k], r = x.r;
+        const route = { name: r.name, tag: r.tag, pitch: r.pitch, shape: r.shape,
+          phases: r.phases.map(p => ({ name: p.name, days: (p.stops || []).reduce((a, s) => a + s.nights, 0), stops: (p.stops || []).map(s => ({ place: s.place, nights: s.nights })) })) };
+        hideErr(); st.redraw = k; st.tw = null; draw();
+        const { data, error } = await sb.functions.invoke('draft-trip', { body: Object.assign(NT.request(st.ans, ctx()), { tweak: { text: text.slice(0, 300), route } }) });
+        st.redraw = null;
+        const got = !error && data && data.draft && Array.isArray(data.draft.routes) && data.draft.routes[0];
+        if (got) {
+          try { const [nx] = await prepareRoutes([got]); nx.tweak = text; st.routes[k] = nx; st.twText = ''; if (st.step === 'routes') draw(); return; }
+          catch (e) { console.warn(e); }
         }
-        gl.resize(); gl.getSource('legs').setData(d.legs); gl.getSource('pins').setData(d.pins);
-        glMarks.forEach(m => m.remove()); glMarks = [];
-        const mb = window.mapboxgl;
-        d.pts.forEach((s, i) => {
-          const end = i === 0 || i === d.pts.length - 1;
-          const el = h('span', { class: 'plab' + (end ? ' se' : '') }, (i === 0 ? 'Start · ' : i === d.pts.length - 1 ? 'End · ' : '') + s.place);
-          glMarks.push(new mb.Marker({ element: el, anchor: 'left', offset: [end ? 16 : 11, 0] }).setLngLat([s.lng, s.lat]).addTo(gl));
-        });
-        const seen = {};
-        badgesFor(x).forEach(b => {
-          const k = b.s.place; const n = seen[k] = (seen[k] || 0) + 1;
-          const el = h('span', { class: 'mbdg' + (b.dark ? ' dk' : ''), title: b.text, html: hlIcon(b.kind, 16) });
-          glMarks.push(new mb.Marker({ element: el, anchor: 'bottom', offset: [(n - 1) * 30 - 8, -14] }).setLngLat([b.s.lng, b.s.lat]).addTo(gl));
-        });
-        if (d.pts.length) gl.fitBounds(boundsOf(d.pts), { padding: { top: 50, bottom: 50, left: 50, right: 130 }, duration: 700, maxZoom: 8 });
+        st.tw = k; draw(); showErr(await errorOf(error, 'Couldn\'t redraw that route just now. Try again in a minute.'));
       }
-      const boundsOf = pts => {
-        if (!pts.length) return [[-180, -60], [180, 75]];
-        let a = [180, 90], b = [-180, -90];
-        pts.forEach(p => { a = [Math.min(a[0], p.lng), Math.min(a[1], p.lat)]; b = [Math.max(b[0], p.lng), Math.max(b[1], p.lat)]; });
-        if (a[0] === b[0] && a[1] === b[1]) { a = [a[0] - 1, a[1] - 1]; b = [b[0] + 1, b[1] + 1]; }
-        return [a, b];
-      };
+      function routesPart() {
+        const R = st.routes;
+        const col = (cls, fn) => R.map((x, k) => h('div', { class: 'cx-c ' + cls + (k === st.cur ? ' on' : ''), onclick: () => { if (st.cur !== k) { st.cur = k; if (st.tw !== k) st.tw = null; draw(); } } }, fn(x, k)));
+        const row = (label, cls, fn) => [h('div', { class: 'cx-rl ' + cls }, label), ...col(cls, fn)];
+        const busy = k => st.redraw === k;
+        const mini = x => {
+          if (st.view === 'list') return h('div', { class: 'cx-pl' }, NT.phaseList(x.r.phases, (x.r.highlights || []).concat(st.draft.shared || [])).map(g => h('div', null,
+            h('div', { class: 'cx-pgh' }, g.name || 'Phase', h('span', null, plural(g.days, 'day'))),
+            g.stops.map(t => h('div', { class: 'cx-ps' }, h('span', { class: 'pd' }, plural(t.nights, 'day')), h('span', null, h('b', null, t.place), t.what ? h('i', null, t.what) : null))))));
+          const url = PLACES.staticMap(x.stops, 300, 170, { curve: true });
+          return url ? h('img', { class: 'cx-map', src: url, alt: 'Map of ' + NT.tidy(x.r.name), width: 300, height: 170, loading: 'lazy' }) : h('div', { class: 'cx-map none' });
+        };
+        const tweakCell = (x, k) => {
+          if (k !== st.cur) return null;
+          if (busy(k)) return h('span', { class: 'muted' }, 'Redrawing this route…');
+          if (st.tw !== k) return [h('button', { type: 'button', class: 'twb', onclick: e => { e.stopPropagation(); st.tw = k; draw(); setTimeout(() => { const t = body.querySelector('.twt'); if (t) t.focus(); }, 0); } }, ico(FI.pen, 16), 'Tweak this route'),
+            x.tweak ? h('span', { class: 'twd' }, 'Changed: ' + x.tweak) : null];
+          const ta = h('textarea', { class: 'twt', maxlength: 300, placeholder: 'For example: one more night in ' + (x.stops[1] || x.stops[0] || { place: 'the mountains' }).place + ', skip a stop, end somewhere else',
+            'aria-label': 'What would you change?', value: st.twText, oninput: e => { st.twText = e.target.value; }, onclick: e => e.stopPropagation() });
+          return h('div', { class: 'twbox', onclick: e => e.stopPropagation() }, h('span', { class: 'twl' }, 'What would you change?'), ta,
+            h('div', { class: 'twa' }, h('button', { type: 'button', class: 'btn small', onclick: () => { st.tw = null; st.twText = ''; draw(); } }, 'Cancel'),
+              h('button', { type: 'button', class: 'btn small primary', onclick: () => redraw(k) }, 'Redraw this route')));
+        };
+        const vbtn = (v, label) => h('button', { type: 'button', class: 'seg-btn' + (st.view === v ? ' on' : ''), 'aria-pressed': String(st.view === v), onclick: () => { st.view = v; draw(); } }, label);
+        const hls = x => (x.r.highlights || []).filter(hl => !hl.skip);
+        const skips = x => (x.r.highlights || []).filter(hl => hl.skip).map(hl => NT.tidy(hl.text)).join('; ');
+        return [h('div', { class: 'rhdr' }, h('div', { class: 'nt-ttl' }, 'Three ways through ' + destName()), st.draft.description ? h('p', { class: 'lead' }, NT.tidy(st.draft.description)) : null),
+          h('div', { class: 'cx-bar' }, h('div', { class: 'seg', role: 'group', 'aria-label': 'Show routes as' }, vbtn('map', 'Map'), vbtn('list', 'List'))),
+          h('div', { class: 'cx-tb' + (R.length === 2 ? ' two' : R.length === 1 ? ' one' : '') },
+            row('', 'hd', (x, k) => [h('span', { class: 'cx-nm', role: 'radio', 'aria-checked': String(k === st.cur), tabindex: '0',
+              onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); st.cur = k; draw(); } } }, h('span', { class: 'cx-radio', 'aria-hidden': 'true' }), NT.tidy(x.r.name)),
+              x.r.tag ? h('span', null, h('span', { class: 'cx-tag' }, NT.tidy(x.r.tag))) : null]),
+            row('', 'mp', x => busy(R.indexOf(x)) ? h('div', { class: 'cx-map none' }, h('div', { class: 'spinner', 'aria-hidden': 'true' })) : mini(x)),
+            row('Only this one', '', x => h('span', { class: 'cx-only' }, NT.tidy(x.r.only || x.r.pitch))),
+            row('Highlights', '', x => hls(x).map(hl => h('span', { class: 'cx-hl' }, svg(hlIcon(hl.kind, 18)), h('span', null, NT.tidy(hl.text))))),
+            row('Leaves out', '', x => h('span', { class: 'cx-minus' }, skips(x) || '–')),
+            row('Getting around', '', x => h('span', { class: 'cx-meta' }, plural(x.stops.reduce((a, s) => a + s.n, 0), 'night') + (x.left ? ' · ' + plural(x.left, 'day') + ' to plan' : ''),
+              h('br'), NT.travelText(x.stops.map(s => ({ next: s.next }))) || 'One base',
+              h('br'), (() => { const a = x.stops[0], b = x.stops[x.stops.length - 1]; if (!a || !b) return '';
+                return x.r.shape === 'loop' || a.place === b.place ? 'Loop from ' + a.place : 'Into ' + a.place + ', out of ' + b.place; })())),
+            row('', 'ft', tweakCell))];
+      }
       function drawFoot3() {
-        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => go('sentence') }, '‹ Back to your sentence'), null);
+        const x = st.routes[st.cur], idle = st.tw !== st.cur && st.redraw === null;
+        setFoot(h('button', { type: 'button', class: 'btn', onclick: () => { st.tw = null; go('sentence'); } }, '‹ Back to your answers'),
+          idle ? [h('span', { class: 'muted' }, 'Picked: ', h('b', { class: 'ink' }, NT.tidy(x.r.name))),
+            h('button', { type: 'button', class: 'btn primary', onclick: () => createTrip({ route: x }) }, 'Build my trip from this →')] : null);
       }
 
       /* ── import: pasted rows or a .csv / .xlsx file ── */
@@ -675,7 +646,7 @@
       }
 
       /* ── drawing ── */
-      function go(step) { st.step = step; st.open = step === 'sentence' ? (NT.missing(st.ans)[0] || null) : null; hideErr(); body.scrollTop = 0; draw(); if (step === 'where') setTimeout(() => dest.focus(), 30); }
+      function go(step) { st.step = step; hideErr(); body.scrollTop = 0; draw(); if (step === 'where') setTimeout(() => dest.focus(), 30); }
       function draw() {
         const big = st.step === 'routes' && !st.busy;
         box.classList.toggle('big', big);
@@ -690,8 +661,8 @@
           if (where.parentNode !== body || body.children.length !== 2) body.replaceChildren(where, datesBox);
           if (st.cal) { const p = body.querySelector('.rp-pop'); if (p && p.scrollIntoView) p.scrollIntoView({ block: 'nearest' }); }
           drawFoot1();
-        } else if (st.step === 'sentence') { body.replaceChildren(...sentencePart().filter(Boolean)); drawFoot2(); }
-        else if (st.step === 'routes') { body.replaceChildren(...routesPart().filter(Boolean)); drawFoot3(); paintMap(); }
+        } else if (st.step === 'sentence') { body.replaceChildren(...formPart().filter(Boolean)); drawFoot2(); }
+        else if (st.step === 'routes') { body.replaceChildren(...routesPart().filter(Boolean)); drawFoot3(); }
         else { const had = document.activeElement && document.activeElement.classList.contains('imp-ta'); const pos = had && document.activeElement.selectionStart;
           body.replaceChildren(...importPart().filter(Boolean)); drawFoot4();
           if (had) { const t = body.querySelector('.imp-ta'); t.focus(); t.setSelectionRange(pos, pos); } }
@@ -732,12 +703,11 @@
           const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
           pendingStop = one;
         }
-        if (gl) { gl.remove(); gl = null; }
         close(); location.hash = '#/trip/' + data.id;
       }
 
-      // Escape closes an open blank or the calendar before it closes the pop-up.
-      box.addEventListener('keydown', e => { if (e.key === 'Escape' && (st.open || st.cal)) { e.stopPropagation(); st.open = null; st.cal = null; draw(); } }, true);
+      // Escape closes the calendar or the tweak box before it closes the pop-up.
+      box.addEventListener('keydown', e => { if (e.key === 'Escape' && (st.cal || st.tw !== null)) { e.stopPropagation(); st.cal = null; st.tw = null; draw(); } }, true);
       draw();
       box.append(x, lbl, body, err, foot);
     });

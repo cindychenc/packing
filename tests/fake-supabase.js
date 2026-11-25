@@ -137,11 +137,14 @@
             await new Promise(r => setTimeout(r, 150));
             if (localStorage.getItem('fake:draft') === 'fail') return { data: null, error: { message: 'Edge Function returned a non-2xx status code', context: { json: async () => ({ error: 'The AI couldn\'t make a draft just now. Try again in a minute.' }) } } };
             const st = (place, country, nights, why, next) => ({ place, country, nights, why, next });
+            if (b.tweak) return { data: { model: 'fake', draft: { routes: [{ name: b.tweak.route.name, tag: 'Quietest', pitch: 'Lakes, then out of Buenos Aires.', only: 'Ends in Buenos Aires.', shape: 'open',
+              highlights: [{ text: 'Volcano hikes', kind: 'volcano', place: 'Pucón' }],
+              phases: [{ name: 'Lakes', stops: [st('Pucón', 'Chile', 10, 'Lakes and volcanoes.', 'fly')] }, { name: 'Buenos Aires', stops: [st('Buenos Aires', 'Argentina', 11, 'Food and walks.')] }] }] } }, error: null };
             return { data: { model: 'fake', draft: {
               description: 'All three end with Fitz Roy. They differ in the first week through ' + b.destination + '.',
               shared: [{ text: 'Fitz Roy day hikes', kind: 'hike', place: 'El Chaltén' }],
               routes: [
-                { name: 'The big treks', tag: 'Easiest to plan', pitch: 'Two short flights and most of your time on the trails!', best_for: ['nature & adventure'],
+                { name: 'The big treks', tag: 'Easiest to plan', pitch: 'Two short flights and most of your time on the trails!', only: 'Only the big treks has the W Trek!', shape: 'open', best_for: ['nature & adventure'],
                   highlights: [{ text: 'W Trek, 5 days', kind: 'hike', place: 'Puerto Natales', because: 'nature & adventure' }, { text: 'Skips the lakes', kind: 'lake', skip: true }],
                   phases: [{ name: 'Central Chile', stops: [st('Santiago', 'Chile', 3, 'Fly in and get your bearings.', 'fly'), st('Pucón', 'Chile', 4, 'Volcano and lake hikes.', 'fly')] },
                     { name: 'Patagonia', stops: [st('Puerto Natales', 'Chile', 6, 'Base for the W Trek.', 'bus'), st('El Chaltén', 'Argentina', 9, 'Day hikes to Fitz Roy.')] }] },

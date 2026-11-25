@@ -1,7 +1,10 @@
 # draft-trip
 
 Makes the three route options for step 3 of the new trip pop-up.
-- The browser sends step 1 (destination, length, start date if set) and the "finish the sentence" answers: who, what you love, pace, and any of when, start point, end point, must do and rather avoid.
+- The browser sends step 1 (destination, length, start date or seasons) and step 2's answers, all optional: interests, who's going, pace, how active,
+  start and end points with the route shape (loop or open-jaw), and free text for must do and avoid (up to 300 characters each).
+- "Tweak this route" sends the same answers plus `tweak: { text, route }`: the one route as it is now and the change typed in.
+  The function then redraws just that route (same steps, one route) and returns it as `draft.routes[0]`. It counts towards the daily limit.
 - This function asks Claude in two steps: first an outline of three routes (phases and how many days each gets), then, for all three routes at once, the stops inside each phase. Splitting it keeps long trips adding up. It sends the three routes back. Each route has a name, tag, pitch, "best for", 2–4 highlights (the last one is its trade-off) and phases with stops.
 - Nothing is saved until you press "Customize this plan" in the app.
 - One set of three counts as one of the 20 drafts per day (it's four calls to Claude: one outline, three stop lists).

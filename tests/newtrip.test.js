@@ -4,20 +4,28 @@ const zlib = require('zlib');
 let fails = 0; const ok = (c, m) => { console.log((c ? '  ok  ' : 'FAIL  ') + m); if (!c) fails++; };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-// sentence
-const ctx = { dest: 'Patagonia', lengthText: '3-week', days: 21, places: ['Santiago'] };
-let ans = { added: [] };
-let tk = T.tokens(ans, ctx);
-ok(tk[0].text === 'A 3-week trip through Patagonia ' && tk[1].blank === 'who' && !tk[1].filled && tk[1].label === 'with…', 'sentence starts with the trip, blanks empty');
-ok(eq(T.missing(ans), ['who', 'loves', 'pace']), 'three blanks needed');
-ans = { who: 'by myself', loves: ['food & wine', 'nightlife'], pace: 'slowly, 3+ nights per stop', added: ['from', 'skip'], from: 'Santiago', skip: 'long bus days' };
-tk = T.tokens(ans, ctx);
-const txt = tk.map(t => t.text || t.label).join('');
-ok(txt === 'A 3-week trip through Patagonia by myself, and I love food & wine and nightlife. I travel slowly, 3+ nights per stop. Starting in Santiago. I’d rather avoid long bus days.', 'solo wording + extras: ' + txt);
-ok(T.missing(ans).length === 0, 'all filled');
-const rq = T.request(ans, Object.assign({ start: null }, ctx));
-ok(rq.who === 'by myself' && eq(rq.loves, ['food & wine', 'nightlife']) && rq.from === 'Santiago' && rq.to === null && rq.avoid === 'long bus days' && eq(rq.must, []), 'request');
-ok(T.optionsFor('from', ctx)[0] === 'Santiago' && T.extrasFor({ exactDates: true }, []).every(e => e[0] !== 'when'), 'start point offers step-1 places; no "when" with exact dates');
+// step 2: the form (every answer optional)
+const ctx = { dest: 'Patagonia', days: 21, exactDates: false, seasons: [] };
+let rq = T.request({ loves: [], shape: 'any' }, ctx);
+ok(rq.who === null && eq(rq.loves, []) && rq.pace === null && rq.fitness === null && rq.when === null && rq.shape === null && eq(rq.must, []) && rq.avoid === null, 'all blank is a valid request');
+const ans = { who: 'by myself', loves: ['food scene', 'markets'], pace: 'slowly, 3+ nights per stop', fitness: 'day hikes', shape: 'open', from: ' Santiago ', to: 'Buenos Aires',
+  must: 'the W Trek, a night in a yurt', avoid: 'long bus days' };
+rq = T.request(ans, Object.assign({}, ctx, { seasons: ['spring', 'fall'] }));
+ok(rq.who === 'by myself' && eq(rq.loves, ['food scene', 'markets']) && rq.fitness === 'day hikes' && rq.from === 'Santiago' && rq.to === 'Buenos Aires' && rq.shape === 'open'
+  && eq(rq.must, ['the W Trek, a night in a yurt']) && rq.avoid === 'long bus days' && rq.when === 'in spring or autumn', 'request: ' + JSON.stringify(rq));
+ok(T.request(Object.assign({}, ans, { shape: 'loop' }), ctx).to === 'Santiago', 'a loop ends where it starts');
+ok(T.request(ans, Object.assign({}, ctx, { exactDates: true, seasons: ['spring'] })).when === null, 'no season with exact dates');
+ok(eq(T.pickSeason(['spring'], 'summer'), ['spring', 'summer']) && eq(T.pickSeason(['spring', 'summer'], 'unsure'), ['unsure']) && eq(T.pickSeason(['unsure'], 'winter'), ['winter'])
+  && eq(T.pickSeason(['spring', 'summer'], 'spring'), ['summer']), 'seasons: several at once; "Not sure yet" stands alone');
+ok(T.whenText(['unsure']) === null && T.whenText(['winter']) === 'in winter' && T.whenText(['spring', 'summer', 'fall']) === 'in spring, summer or autumn', 'season text');
+ok(T.paceCap(T.FORM.pace[0][2]) === 5 && T.paceCap(T.FORM.pace[2][2]) === 2 && T.paceCap(null) === 4, 'pace values keep their nights per stop');
+ok(T.FORM.loves.length === 15 && T.FORM.shown === 6 && eq(T.toggle(['a'], 'b'), ['a', 'b']) && eq(T.toggle(['a', 'b'], 'a'), ['b']), 'interests and toggling');
+
+// step 3: the table cells
+ok(T.travelText([{ next: 'fly' }, { next: 'bus' }, { next: 'bus' }, { next: 'drive' }, {}]) === '1 flight · 2 buses · 1 driving day' && T.travelText([{}]) === '', 'getting around');
+const pl = T.phaseList([{ name: 'Patagonia', stops: [{ place: 'Puerto Natales', nights: 6, why: 'Base for the W Trek.' }, { place: 'El Chaltén', nights: 5, why: 'Fitz Roy!' }] }],
+  [{ text: 'W Trek, 5 days', place: 'puerto natales' }, { text: 'Skips the glacier', place: 'El Chaltén', skip: true }]);
+ok(pl[0].days === 11 && pl[0].stops[0].what === 'W Trek, 5 days' && pl[0].stops[1].what === 'Fitz Roy.', 'list view: highlight for the stop, else why (tidied)');
 ok(T.lengthText(21, '3 weeks') === '3-week' && T.lengthText(14, null) === '14-day' && T.lengthText(3, 'Weekend') === 'weekend', 'length text');
 
 // places: a country name narrows the search

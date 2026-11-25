@@ -114,20 +114,31 @@
     return out;
   }
   // A static map image of the stops joined in order: [{ lat, lng, colour }].
-  function staticMap(stops, w, hgt) {
+  /* Each leg bowed into a gentle arc (a quadratic curve, sampled), so the static map's path reads like the wireframe's. */
+  function curved(pts) {
+    const out = [];
+    pts.forEach((p, i) => {
+      out.push([p.lat, p.lng]); const q = pts[i + 1]; if (!q) return;
+      const dx = q.lng - p.lng, dy = q.lat - p.lat, b = 0.18;
+      const c = [(p.lat + q.lat) / 2 + dx * b, (p.lng + q.lng) / 2 - dy * b];
+      for (let t = 1; t < 8; t++) { const u = t / 8, v = 1 - u; out.push([v * v * p.lat + 2 * v * u * c[0] + u * u * q.lat, v * v * p.lng + 2 * v * u * c[1] + u * u * q.lng]); }
+    });
+    return out;
+  }
+  function staticMap(stops, w, hgt, opts) {
     const token = (root.SUITCASE_CONFIG || {}).mapboxToken;
     const pts = stops.filter(p => p.lat != null && p.lng != null);
     if (!token || !pts.length) return null;
     const hex = c => (c || '#3F5675').replace('#', '').toLowerCase();
     const r6 = v => Math.round(v * 1e4) / 1e4;
     const over = [];
-    if (pts.length > 1) over.push('path-3+3f5675-0.75(' + encodeURIComponent(polyline(pts.map(p => [p.lat, p.lng]))) + ')');
+    if (pts.length > 1) over.push('path-3+3f5675-0.75(' + encodeURIComponent(polyline(opts && opts.curve ? curved(pts) : pts.map(p => [p.lat, p.lng]))) + ')');
     pts.forEach(p => over.push('pin-s+' + hex(p.colour) + '(' + r6(p.lng) + ',' + r6(p.lat) + ')'));
     return 'https://api.mapbox.com/styles/v1/mapbox/light-v11/static/' + over.join(',') + '/auto/' + (w || 600) + 'x' + (hgt || 320) +
       '@2x?padding=40&access_token=' + encodeURIComponent(token);
   }
 
-  const api = { suggest, lookup, ccFor, km, staticMap, polyline, phaseNameFor, continentOf, fromFeature };
+  const api = { suggest, lookup, ccFor, km, staticMap, curved, polyline, phaseNameFor, continentOf, fromFeature };
   root.SuitcasePlaces = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

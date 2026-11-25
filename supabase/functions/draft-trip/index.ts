@@ -1,8 +1,8 @@
-// Suitcase · draft-trip: turns the "finish the sentence" answers into three route options with Claude.
+// Suitcase · draft-trip: turns the new-trip answers into three route options with Claude, or redraws one route ("Tweak this route").
 // Runs on Supabase (Deno). Needs the secret ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
 // The key never reaches the browser. Only signed-in people can call this, up to DAILY_LIMIT drafts a day.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, repairMessage, nightsFor, type Ask } from './prompt.ts';
+import { MODEL, KINDS, MODES, OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage, STOPS_SYSTEM, STOPS_TOOL, stopsMessage, repairMessage, nightsFor, TWEAK_TOOL, tweakMessage, type Ask, type Draft } from './prompt.ts';
 
 const DAILY_LIMIT = 20;
 const ALLOWED = ['https://packing.boringcase.com', 'http://localhost:8000'];
@@ -33,22 +33,30 @@ Deno.serve(async (req) => {
   let body: any;
   try { body = await req.json(); } catch { return reply(400, { error: 'Bad request.' }); }
   const one = (v: unknown, n = 80) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
-  const many = (v: unknown) => (Array.isArray(v) ? v : []).map((x) => one(x)).filter((x): x is string => !!x).slice(0, 10);
+  const many = (v: unknown, n = 80) => (Array.isArray(v) ? v : []).map((x) => one(x, n)).filter((x): x is string => !!x).slice(0, 15);
   const ask: Ask = {
     destination: one(body.destination, 200) ?? '',
     days: Math.round(Number(body.days)),
     start: /^\d{4}-\d{2}-\d{2}$/.test(body.start ?? '') ? body.start : null,
     who: one(body.who), loves: many(body.loves), pace: one(body.pace), when: one(body.when),
-    from: one(body.from), to: one(body.to), must: many(body.must), avoid: one(body.avoid),
-    shape: body.shape === 'loop' || body.shape === 'open' ? body.shape : null,
+    from: one(body.from), to: one(body.to), must: many(body.must, 300), avoid: one(body.avoid, 300),
+    shape: body.shape === 'loop' || body.shape === 'open' ? body.shape : null, fitness: one(body.fitness),
   };
+  // "Tweak this route": the route as it is now, and the change typed in.
+  let tweak: { text: string; route: Draft } | null = null;
+  if (body.tweak && one(body.tweak.text, 300) && Array.isArray(body.tweak.route?.phases)) {
+    const r = body.tweak.route;
+    tweak = { text: one(body.tweak.text, 300)!, route: { name: one(r.name) ?? 'This route', tag: one(r.tag) ?? undefined, pitch: one(r.pitch, 300) ?? undefined,
+      phases: r.phases.slice(0, 8).map((p: any) => ({ name: one(p?.name) ?? 'Phase', days: Math.max(1, Math.round(+p?.days || 1)),
+        stops: (Array.isArray(p?.stops) ? p.stops : []).slice(0, 30).map((s: any) => ({ place: one(s?.place) ?? '?', nights: Math.max(1, Math.round(+s?.nights || 1)) })) })) } };
+  }
   if (!ask.destination || !(ask.days >= 1 && ask.days <= 731)) return reply(400, { error: 'Destination and length are needed.' });
 
   // Daily limit.
   const since = new Date(Date.now() - 24 * 3600e3).toISOString();
   const { count } = await sb.from('ai_drafts').select('id', { count: 'exact', head: true }).gte('created_at', since);
   if ((count ?? 0) >= DAILY_LIMIT) return reply(429, { error: `That's ${DAILY_LIMIT} drafts today. Try again tomorrow.` });
-  await sb.from('ai_drafts').insert({ kind: 'inspire' });
+  await sb.from('ai_drafts').insert({ kind: 'inspire' });   // a tweak counts as a draft too
 
   const key = Deno.env.get('ANTHROPIC_API_KEY');
   if (!key) return reply(500, { error: 'The AI key isn\'t set up yet.' });
@@ -68,9 +76,10 @@ Deno.serve(async (req) => {
   }
   const fail = () => reply(502, { error: 'The AI couldn\'t make a draft just now. Try again in a minute.' });
 
-  // Step 1: three outlines (phases with days).
-  const outline = await ask_(OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage(ask), 6000);
-  const routes = Array.isArray(outline?.routes) ? outline.routes.filter((r: any) => Array.isArray(r?.phases) && r.phases.length) : [];
+  // Step 1: three outlines (phases with days), or the one tweaked route.
+  const outline = tweak ? await ask_(OUTLINE_SYSTEM, TWEAK_TOOL, tweakMessage(ask, tweak.route, tweak.text), 3000)
+    : await ask_(OUTLINE_SYSTEM, OUTLINE_TOOL, outlineMessage(ask), 6000);
+  const routes = (Array.isArray(outline?.routes) ? outline.routes.filter((r: any) => Array.isArray(r?.phases) && r.phases.length) : []).slice(0, tweak ? 1 : 3);
   if (!routes.length) return fail();
   // Phase days must add up to the trip: fix it here, where it's a handful of numbers.
   routes.forEach((r: any) => {
@@ -152,6 +161,7 @@ Deno.serve(async (req) => {
   });
   if (!ready.length) return fail();
   const shared = (Array.isArray(outline.shared) ? outline.shared : []).map(fixHl);
+  ready.forEach((r) => { r.only = String(r.only ?? '').slice(0, 160); });
   return reply(200, { draft: { description: String(outline.description ?? ''), shared, routes: ready }, model: MODEL });
 });
 

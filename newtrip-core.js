@@ -1,5 +1,6 @@
 /* Suitcase · new-trip helpers with no page or network code, so they can be tested in Node.
- * - The "finish the sentence" step: its blanks, the sentence built from them, and what is sent to draft-trip.
+ * - Step 2's form: its options and what is sent to draft-trip.
+ * - Step 3's table: travel counts and the list of phases and stops.
  * - Dates: ISO date maths for the range calendar.
  * - Routes: fitting each route's nights to the trip length.
  * - Import: reading CSV/TSV text and .xlsx files into rows, and rows into phases and stops.
@@ -7,52 +8,38 @@
 (function (root) {
   'use strict';
 
-  /* ───────── finish the sentence ───────── */
+  /* ───────── step 2: the form ───────── */
 
-  // Each blank: the question shown above its options, the options, whether several can be picked, and the empty label.
-  const BLANKS = {
-    who: { q: 'Who’s going?', opts: ['by myself', 'with my partner', 'with friends', 'with my family'], ph: 'with…' },
-    loves: { q: 'What do you love?', multi: true, ph: 'what you love',
-      opts: ['city & culture', 'nature & adventure', 'food & wine', 'beaches & relaxing', 'arts & history', 'off-the-beaten-path places', 'hot springs & rest', 'nightlife'] },
-    pace: { q: 'How do you like to travel?', opts: ['slowly, 3+ nights per stop', 'steadily, 2–3 nights per stop', 'quickly, 1–2 nights per stop'], ph: 'at what pace' },
-    when: { q: 'When?', opts: ['in spring', 'in summer', 'in autumn', 'in winter', 'over the holidays'], ph: 'when' },
-    from: { q: 'Starting in', opts: [], ph: 'where' },
-    to: { q: 'Ending in', opts: [], ph: 'where' },
-    must: { q: 'Must do', multi: true, ph: 'what',
-      opts: ['do a multi-day hike', 'see wildlife', 'take a cooking class', 'one special stay', 'catch a local festival', 'go somewhere remote', 'see a famous landmark'] },
-    skip: { q: 'Rather avoid', opts: ['big cities', 'organised tours', 'long bus days', 'early mornings'], ph: 'what' }
+  // Every answer is optional; draft-trip fills gaps with a balanced default.
+  const FORM = {
+    loves: ['outdoor adventure', 'city culture', 'food scene', 'local communities', 'remote landscapes', 'unusual historical sites', 'markets', 'cooking',
+      'history', 'architecture', 'photography', 'off the beaten path', 'museums', 'beach days', 'nightlife'],
+    shown: 6,   // interests shown before "Show more"
+    who: [['Solo', 'by myself'], ['Couple', 'with my partner'], ['Friends', 'with friends'], ['Family', 'with my family']],
+    // the values keep the nights per stop: paceCap here and nightsFor in draft-trip read them
+    pace: [['Slow and immersive', '3+ nights per stop', 'slowly, 3+ nights per stop'], ['Balanced', '2–3 nights per stop', 'steadily, 2–3 nights per stop'],
+      ['Fast-paced', '1–2 nights per stop', 'quickly, 1–2 nights per stop']],
+    fitness: ['Casual walks', 'Day hikes', 'Multi-day treks', 'Big adventures'],
+    shape: [['any', 'Don’t mind'], ['loop', 'Back where I started'], ['open', 'End somewhere else']],
+    seasons: [['spring', 'Spring'], ['summer', 'Summer'], ['fall', 'Fall'], ['winter', 'Winter'], ['unsure', 'Not sure yet']]
   };
-  const REQUIRED = ['who', 'loves', 'pace'];
-  // Optional parts, in the order they're offered under "Add more detail".
-  const EXTRAS = [['when', 'when'], ['from', 'start point'], ['to', 'end point'], ['must', 'must do'], ['skip', 'rather avoid']];
 
   const filled = v => Array.isArray(v) ? v.length > 0 : !!(v && String(v).trim());
-  const listText = a => a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+  const listText = (a, word) => a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' ' + (word || 'and') + ' ' + a[a.length - 1];
+  const toggle = (list, v) => (list || []).indexOf(v) >= 0 ? list.filter(x => x !== v) : (list || []).concat([v]);
 
-  /* The options for one blank. Start and end points offer the places typed in step 1; "when" isn't offered with exact dates. */
-  function optionsFor(id, ctx) {
-    if (id === 'from' || id === 'to') return (ctx.places || []).slice(0, 6);
-    return BLANKS[id].opts.slice();
+  /* Seasons are multi-select; "Not sure yet" stands alone (picking it clears the rest, picking a season clears it). */
+  function pickSeason(list, v) {
+    list = list || [];
+    if (list.indexOf(v) >= 0) return list.filter(x => x !== v);
+    return v === 'unsure' ? ['unsure'] : list.filter(x => x !== 'unsure').concat([v]);
   }
-  function extrasFor(ctx, added) {
-    return EXTRAS.filter(e => added.indexOf(e[0]) < 0 && !(e[0] === 'when' && ctx.exactDates));
+  // ['spring', 'summer'] → "in spring or summer"; none or "Not sure yet" → null
+  function whenText(seasons) {
+    const names = { spring: 'spring', summer: 'summer', fall: 'autumn', winter: 'winter' };
+    const s = (seasons || []).filter(x => names[x]).map(x => names[x]);
+    return s.length ? 'in ' + listText(s, 'or') : null;
   }
-
-  /* The sentence as text pieces and blanks:
-     "A 3-week trip through Patagonia [with my partner], and we love [food & wine]. We travel [slowly…]. Starting in [..]." */
-  function tokens(ans, ctx) {
-    const solo = ans.who === 'by myself';
-    const B = (id, extra) => {
-      const v = ans[id];
-      return { blank: id, extra: !!extra, filled: filled(v), label: filled(v) ? (Array.isArray(v) ? listText(v) : v) : BLANKS[id].ph };
-    };
-    const out = ['A ' + ctx.lengthText + ' trip through ' + ctx.dest + ' ', B('who'), solo ? ', and I love ' : ', and we love ', B('loves'), solo ? '. I travel ' : '. We travel ', B('pace'), '.'];
-    const clause = { when: [' Going ', B('when', 1), '.'], from: [' Starting in ', B('from', 1), '.'], to: [' Ending in ', B('to', 1), '.'],
-      must: [solo ? ' I must ' : ' We must ', B('must', 1), '.'], skip: [solo ? ' I’d rather avoid ' : ' We’d rather avoid ', B('skip', 1), '.'] };
-    (ans.added || []).forEach(k => { if (clause[k]) out.push(...clause[k]); });
-    return out.map(t => typeof t === 'string' ? { text: t } : t);
-  }
-  const missing = ans => REQUIRED.filter(k => !filled(ans[k]));
 
   // "3 weeks" → "3-week"; 10 days → "10-day"; a month → "1-month".
   function lengthText(days, unitLabel) {
@@ -62,20 +49,37 @@
     return days + '-day';
   }
 
-  /* What draft-trip gets. Free text the traveller typed is kept but trimmed. */
+  /* What draft-trip gets. Free text is kept but trimmed; blanks go as null or []. */
   function request(ans, ctx) {
-    const one = v => filled(v) ? String(v).trim().slice(0, 80) : null;
-    const many = v => (Array.isArray(v) ? v : []).map(x => String(x).trim().slice(0, 80)).filter(Boolean).slice(0, 10);
-    const added = ans.added || [];
+    const one = (v, n) => filled(v) ? String(v).trim().slice(0, n || 80) : null;
+    const many = v => (Array.isArray(v) ? v : []).map(x => String(x).trim().slice(0, 80)).filter(Boolean).slice(0, 15);
+    const shape = ans.shape === 'loop' || ans.shape === 'open' ? ans.shape : null;
     return {
       destination: ctx.dest, days: ctx.days, start: ctx.start || null,
-      who: one(ans.who), loves: many(ans.loves), pace: one(ans.pace),
-      when: added.indexOf('when') >= 0 ? one(ans.when) : null,
-      from: added.indexOf('from') >= 0 ? one(ans.from) : null,
-      to: added.indexOf('to') >= 0 ? one(ans.to) : null,
-      must: added.indexOf('must') >= 0 ? many(ans.must) : [],
-      avoid: added.indexOf('skip') >= 0 ? one(ans.skip) : null
+      who: one(ans.who), loves: many(ans.loves), pace: one(ans.pace), fitness: one(ans.fitness),
+      when: ctx.exactDates ? null : whenText(ctx.seasons),
+      from: one(ans.from), to: shape === 'loop' ? one(ans.from) : one(ans.to), shape,
+      must: filled(ans.must) ? [one(ans.must, 300)] : [], avoid: one(ans.avoid, 300)
     };
+  }
+
+  /* ───────── step 3: one route as table cells ───────── */
+
+  const MODE_WORD = { fly: ['flight', 'flights'], bus: ['bus', 'buses'], drive: ['driving day', 'driving days'], train: ['train', 'trains'], boat: ['boat', 'boats'] };
+  /* "21 nights" and "2 flights · 2 buses" from a route's stops (each stop's next = how you leave it). */
+  function travelText(stops) {
+    const n = {}; (stops || []).slice(0, -1).forEach(s => { const m = MODE_WORD[s.next] ? s.next : 'bus'; n[m] = (n[m] || 0) + 1; });
+    return Object.keys(MODE_WORD).filter(m => n[m]).map(m => n[m] + ' ' + MODE_WORD[m][n[m] === 1 ? 0 : 1]).join(' · ');
+  }
+  /* The list view: phases, each with its days and its stops (nights + the thing to do there). */
+  function phaseList(phases, highlights) {
+    const norm = t => String(t || '').trim().toLowerCase();
+    const hl = (highlights || []).filter(h => h && !h.skip && h.place);
+    return (phases || []).map(p => {
+      const stops = (p.stops || []).map(s => { const h = hl.find(x => norm(x.place) === norm(s.place));
+        return { place: s.place, nights: s.nights, what: tidy(h ? h.text : s.why || '') }; });
+      return { name: p.name || '', days: stops.reduce((a, s) => a + (s.nights || 0), 0), stops };
+    });
   }
 
   /* ───────── dates (ISO yyyy-mm-dd, no time zones) ───────── */
@@ -294,7 +298,7 @@
     return { phases: out, start, days, byDay, skipped };
   }
 
-  const api = { BLANKS, REQUIRED, EXTRAS, optionsFor, extrasFor, tokens, missing, lengthText, request, listText,
+  const api = { FORM, toggle, pickSeason, whenText, lengthText, request, listText, travelText, phaseList,
     addDays, daysIncl, isIso, monthGrid, fitNights, paceCap, dayPlans, tidy, parseDelimited, readXlsx, planFromRows, cellDate };
   root.SuitcaseNewTrip = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
