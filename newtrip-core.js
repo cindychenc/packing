@@ -156,6 +156,45 @@
     return out;
   }
 
+  /* A new trip from a generated route fills in only the days that are fixed: getting there, the highlights
+     (with the start and end of a multi-day one, e.g. "W Trek, 5 days"), and the last night. Every other line
+     Claude wrote for a stop is kept as an idea for that stop, for later. Each filled day is marked auto. */
+  const MULTI = /(?:,\s*|\s+|\()(\d{1,2})[- ]days?\b\)?|\b(\d{1,2})-day\b/i;
+  function crucialPlans(phases, highlights) {
+    const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => stops.push(s)));
+    const norm = t => String(t || '').toLowerCase();
+    const words = t => norm(t).split(/[^a-zà-ÿ]+/).filter(w => w.length >= 5);
+    const days = [], ideas = [];
+    stops.forEach((s, i) => {
+      const n = Math.max(1, s.nights || 1), prev = stops[i - 1];
+      const lines = Array.from({ length: n }, () => []);
+      lines[0].push(i === 0 ? 'Arrive in ' + s.place : (MODE_FROM[prev.next] || 'Travel from ') + prev.place);
+      let next = n > 1 ? 1 : 0;                       // highlights start the day after arriving, when there is one
+      const used = [];
+      (highlights || []).filter(hl => hl && !hl.skip && hl.place && norm(hl.place) === norm(s.place)).forEach(hl => {
+        const text = tidy(hl.text), m = MULTI.exec(text), len = m ? Math.min(+(m[1] || m[2]), n - next) : 1;
+        used.push(text);
+        if (next >= n) { lines[n - 1].push(text); return; }
+        if (m && len > 1) {
+          const name = text.replace(MULTI, ' ').replace(/\s+/g, ' ').replace(/\s+([,.)])/g, '$1').replace(/[,\s(]+$/, '').trim();
+          lines[next].push('Start ' + name + ' (' + len + ' days)');
+          for (let k = 1; k < len - 1; k++) lines[next + k].push(name + ', day ' + (k + 1) + ' of ' + len);
+          lines[next + len - 1].push('Finish ' + name);
+          next += len;
+        } else { lines[next].push(text); next = Math.min(next + 1, n); }
+      });
+      // Claude's other lines for this stop become ideas, unless they repeat a highlight or the travel line
+      (Array.isArray(s.plans) ? s.plans : []).map(tidy).filter(Boolean).forEach(t => {
+        const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(lines[0]).some(u => w.some(x => norm(u).indexOf(x) >= 0));
+        if (!dup && !/^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, '') });
+      });
+      lines.forEach((d, k) => days.push({ plan: d.join(' · ') || null, notes: k === 0 && s.why ? tidy(s.why) : null, auto: d.length > 0 }));
+    });
+    if (days.length) { const last = days[days.length - 1]; last.plan = (last.plan ? last.plan + ' · ' : '') + 'Last night'; last.auto = true; }
+    const seen = {};
+    return { days, ideas: ideas.filter(x => { const k = norm(x.place + '|' + x.text); return !seen[k] && (seen[k] = 1); }) };
+  }
+
   // Words the voice guide rules out; a highlight or pitch using one is still shown, minus exclamation marks.
   const tidy = t => String(t || '').replace(/!+/g, '.').replace(/\s+/g, ' ').trim();
 
@@ -298,7 +337,7 @@
     return { phases: out, start, days, byDay, skipped };
   }
 
-  const api = { FORM, toggle, pickSeason, whenText, lengthText, request, listText, travelText, phaseList,
+  const api = { FORM, toggle, pickSeason, whenText, lengthText, request, listText, travelText, phaseList, crucialPlans,
     addDays, daysIncl, isIso, monthGrid, fitNights, paceCap, dayPlans, tidy, parseDelimited, readXlsx, planFromRows, cellDate };
   root.SuitcaseNewTrip = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

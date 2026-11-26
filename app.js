@@ -528,7 +528,8 @@
         return routes.map(r => {
           const fit = NT.fitNights(r.phases, total, NT.paceCap(st.ans.pace));
           const L = LAYOUT.fromDraft(r.phases, total).layout;
-          fillDays(L, NT.dayPlans(r.phases, (r.highlights || []).concat(st.draft.shared || [])));
+          const cp = NT.crucialPlans(r.phases, (r.highlights || []).concat(st.draft.shared || []));   // only the fixed days; the rest become ideas
+          fillDays(L, cp.days);
           const stops = [];
           r.phases.forEach((p, pi) => (p.stops || []).forEach(s => {
             const f = at[s.place + '|' + (s.country || '')] || {};
@@ -536,13 +537,13 @@
             stops.push({ place: s.place, n: s.nights, why: s.why, next: s.next || null, colour: lp ? lp.colour : '#3F5675', phase: lp ? lp.id : null,
               lat: f.lat, lng: f.lng, country: f.country || s.country, label: f.label });
           }));
-          return { r, layout: L, stops, left: fit.left, tweak: null };
+          return { r, layout: L, stops, left: fit.left, tweak: null, ideas: cp.ideas };
         });
       }
       // Put the day-by-day lines into a new layout's days, in order (days past the planned ones stay empty).
       function fillDays(L, lines) {
         let k = 0;
-        L.phases.forEach(p => p.days.forEach(d => { const x = lines[k++]; if (x) { d.plan = x.plan; d.notes = x.notes; } }));
+        L.phases.forEach(p => p.days.forEach(d => { const x = lines[k++]; if (x) { d.plan = x.plan; d.notes = x.notes; d.auto = !!(x.auto && x.plan); } }));
       }
       /* "Tweak this route": draft-trip redraws just that one route with the change typed in. */
       async function redraw(k) {
@@ -782,6 +783,12 @@
           const places = stops.filter(s => s.lat != null && !seen[s.place] && (seen[s.place] = 1))
             .map(s => ({ trip_id: data.id, name: s.place, lat: s.lat, lng: s.lng, country: s.country || null, found_as: s.label || null }));
           if (places.length) sb.from('places').upsert(places, { onConflict: 'trip_id,name' }).then(x => { if (x && x.error) console.warn('places not saved', x.error.message); });
+          // Prefilled days are marked (the planner shows an icon until someone edits them), and Claude's other lines are kept as ideas.
+          // Both need migration 005; before it they're skipped with a warning and the trip still works.
+          const autoIds = layout.phases.flatMap(p => p.days).filter(d => d.auto).map(d => d.id);
+          if (autoIds.length) await sb.from('days').update({ plan_auto: true }).in('id', autoIds).then(x => { if (x && x.error) console.warn('prefilled marks not saved', x.error.message); });
+          const ideas = (o.route && o.route.ideas || []).slice(0, 400).map((x, i) => ({ trip_id: data.id, place: x.place, text: x.text.slice(0, 300), source: 'route', sort: i }));
+          if (ideas.length) sb.from('stop_ideas').insert(ideas).then(x => { if (x && x.error) console.warn('ideas not saved', x.error.message); });
         } else {
           const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
           pendingStop = one;
@@ -1183,6 +1190,7 @@
   }
   const span3 = (fmt, st, len) => fmt.span(st, st + len - 1) + ' · ' + plural(len, 'day');
 
+  const AUTO_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.9zM19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>';
   function flowDay(L, i, j, idx, fmt, live, free) {
     const d = L.phases[i].days[j], row = tripData.days.find(x => x.id === d.id), date = fmt.dateAt(idx);
     const box = h('span', { class: 'f-day' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]);
@@ -1194,14 +1202,19 @@
       loc.addEventListener('keydown', e => { if (e.key === 'Enter') loc.blur(); });
       return h('div', { class: 'f-row free' }, box, loc, rm);
     }
-    if (!live) return h('div', { class: 'f-row' }, box, h('span', { class: 'f-plan' + (d.plan ? '' : ' muted') }, d.plan || 'No plan yet'));
+    // a plan Suitcase filled in from the route shows a small mark until someone edits it
+    const auto = !!(row && row.plan_auto && d.plan);
+    const mark = auto ? h('span', { class: 'f-auto', title: 'Filled in from your route · edit it to make it yours', 'aria-label': 'Filled in from your route', role: 'img' }, svg(AUTO_ICON)) : null;
+    if (!live) return h('div', { class: 'f-row' }, box, h('span', { class: 'f-plan' + (d.plan ? '' : ' muted') }, d.plan || 'No plan yet', mark));
     const plan = h('input', { class: 'f-in', value: d.plan || '', placeholder: 'Add a plan', 'aria-label': 'Plan for ' + fmt.shortDay(idx) });
     plan.addEventListener('input', () => {
       if (!row) return; const v = plan.value.trim() || null; row.plan = v;
-      clearTimeout(row._tplan); row._tplan = setTimeout(() => saveDayField(row.id, { plan: v }), 500);
+      const patch = { plan: v };
+      if (row.plan_auto) { row.plan_auto = false; patch.plan_auto = false; if (mark) mark.remove(); }
+      clearTimeout(row._tplan); row._tplan = setTimeout(() => saveDayField(row.id, patch), 500);
     });
     plan.addEventListener('keydown', e => { if (e.key === 'Enter') plan.blur(); });
-    return h('div', { class: 'f-row' }, box, plan, rm);
+    return h('div', { class: 'f-row' }, box, mark ? h('span', { class: 'f-pw' }, plan, mark) : plan, rm);
   }
 
   // – N nights +

@@ -87,3 +87,17 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
   ok(pl.start === '2027-04-05', 'xlsx date serial as start: ' + pl.start);
   console.log(fails ? fails + ' failed' : 'all passed'); process.exit(fails ? 1 : 0);
 }).catch(e => { console.log('FAIL xlsx', e); process.exit(1); });
+
+// a trip from a route: only the fixed days are filled in; Claude's other lines become ideas
+{
+  const r = T.crucialPlans([{ stops: [
+    { place: 'Santiago', nights: 2, next: 'fly', plans: ['Arrive, walk Lastarria', 'Cerro San Cristóbal funicular'] },
+    { place: 'Puerto Natales', nights: 7, next: 'bus', why: 'Base for Torres!', plans: ['Arrive', 'W Trek day 1', 'Spare day: rest or a day trip', 'Milodon Cave', 'Walk the Puerto Natales waterfront'] },
+    { place: 'Huaraz', nights: 3, plans: [] }] }],
+    [{ text: 'W Trek, 5 days', place: 'Puerto Natales' }, { text: 'Glacier boat', place: 'puerto natales' }, { text: 'Huayhuash 8-day trek', place: 'Huaraz' }, { text: 'Skips the lakes', place: 'Santiago', skip: true }]);
+  const plans = r.days.map(d => d.plan);
+  ok(eq(plans, ['Arrive in Santiago', null, 'Fly from Santiago', 'Start W Trek (5 days)', 'W Trek, day 2 of 5', 'W Trek, day 3 of 5', 'W Trek, day 4 of 5', 'Finish W Trek', 'Glacier boat',
+    'Bus from Puerto Natales', 'Start Huayhuash trek (2 days)', 'Finish Huayhuash trek · Last night']), 'fixed days only: ' + JSON.stringify(plans));
+  ok(r.days.every(d => d.auto === !!d.plan) && r.days[2].notes === 'Base for Torres.', 'filled days are marked auto; why stays in notes');
+  ok(eq(r.ideas.map(x => x.place + ': ' + x.text), ['Santiago: Cerro San Cristóbal funicular', 'Puerto Natales: Milodon Cave', 'Puerto Natales: Walk the Puerto Natales waterfront']), 'ideas: ' + JSON.stringify(r.ideas));
+}

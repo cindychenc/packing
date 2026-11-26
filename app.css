@@ -535,6 +535,9 @@ input.pc-name::placeholder { color: #9A9A9A; font-weight: 400; font-style: itali
 .f-day span { font-size: 9px; font-weight: 700; color: var(--text2); }
 .f-day strong { font-size: 16px; }
 .f-row.gh .f-day, .f-row.free .f-day { background: #F6F6F6; color: #AAA; }
+.f-pw { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.f-auto { flex: none; display: inline-flex; color: #6B5BD6; margin-right: 8px; }
+.f-plan .f-auto { margin: 0 0 0 6px; vertical-align: -2px; }
 .f-in { font: inherit; width: 100%; border: 1px solid transparent; border-radius: 8px; padding: 7px 8px; background: transparent; }
 .f-in:hover { border-color: var(--line); }
 .f-in:focus { outline: 0; border-color: var(--ink); background: #fff; }

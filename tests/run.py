@@ -377,7 +377,19 @@ try:
         ok(t['destination'] == 'Patagonia' and t['subtitle'] == 'Two short flights and most of your time on the trails.' and t['length_days'] == 21, f"trip keeps destination and the route's pitch ({t['subtitle']!r})")
         ok(sorted(p['name'] for p in db['places'] if p['trip_id'] == t['id']) == ['El Chaltén', 'Pucón', 'Puerto Natales', 'Santiago'], 'stops found on the map are kept')
         plans = [d['plan'] for d in sorted([d for d in db['days'] if d['trip_id'] == t['id']], key=lambda d: d['idx'])]
-        ok(plans[0] == 'Arrive in Santiago' and plans[3] == 'Fly from Santiago' and plans[8] == 'W Trek, 5 days' and plans[20].endswith('Last night'), f'day plans filled in ({plans[:9]} … {plans[20]})')
+        ok(plans[0] == 'Arrive in Santiago' and plans[1] is None and plans[3] == 'Fly from Santiago' and plans[7] == 'Fly from Pucón' and plans[8] == 'Start W Trek (5 days)'
+           and plans[10] == 'W Trek, day 3 of 5' and plans[12] == 'Finish W Trek' and plans[13] == 'Bus from Puerto Natales' and plans[14] == 'Fitz Roy day hikes' and plans[15] is None and plans[20] == 'Last night',
+           f'only the fixed days are filled in ({plans})')
+        autos = [d['plan'] for d in sorted([d for d in db['days'] if d['trip_id'] == t['id']], key=lambda d: d['idx']) if d.get('plan_auto')]
+        ok(len(autos) == len([x for x in plans if x]), f'every prefilled day is marked ({len(autos)})')
+        ideas = sorted((i['place'], i['text']) for i in db.get('stop_ideas', []) if i['trip_id'] == t['id'])
+        ok(ideas == [('Puerto Natales', 'Grey Glacier boat'), ('Puerto Natales', 'Milodon Cave')], f"the stop's other lines are kept as ideas ({ideas})")
+        ok(len(page.query_selector_all('.pcard.live .f-auto')) >= 2, 'prefilled plans show the mark')
+        page.screenshot(path=str(SHOTS / '13c-prefilled.png'))
+        page.fill('.pcard.live .f-in >> nth=0', 'Arrive, then the Lastarria walk'); page.wait_for_timeout(700)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        d0 = [d for d in db['days'] if d['trip_id'] == t['id'] and d['idx'] == 0][0]
+        ok(d0['plan'] == 'Arrive, then the Lastarria walk' and d0['plan_auto'] is False, 'editing a prefilled plan makes it yours')
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
 
         # 9f. import: pasted rows, then an .xlsx file

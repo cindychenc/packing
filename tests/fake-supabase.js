@@ -149,7 +149,7 @@
                 { name: 'The big treks', tag: 'Easiest to plan', pitch: 'Two short flights and most of your time on the trails!', only: 'Only the big treks has the W Trek!', shape: 'open', best_for: ['nature & adventure'],
                   highlights: [{ text: 'W Trek, 5 days', kind: 'hike', place: 'Puerto Natales', because: 'nature & adventure' }, { text: 'Skips the lakes', kind: 'lake', skip: true }],
                   phases: [{ name: 'Central Chile', stops: [st('Santiago', 'Chile', 3, 'Fly in and get your bearings.', 'fly'), st('Pucón', 'Chile', 4, 'Volcano and lake hikes.', 'fly')] },
-                    { name: 'Patagonia', stops: [st('Puerto Natales', 'Chile', 6, 'Base for the W Trek.', 'bus'), st('El Chaltén', 'Argentina', 9, 'Day hikes to Fitz Roy.')] }] },
+                    { name: 'Patagonia', stops: [Object.assign(st('Puerto Natales', 'Chile', 6, 'Base for the W Trek.', 'bus'), { plans: ['Arrive and buy trek food', 'Milodon Cave', 'Grey Glacier boat'] }), st('El Chaltén', 'Argentina', 9, 'Day hikes to Fitz Roy.')] }] },
                 { name: 'Lakes first', tag: 'Quietest', pitch: 'A slow week of lakes, then south.', best_for: ['slowly, 3+ nights per stop'],
                   highlights: [{ text: 'Volcano hikes', kind: 'volcano', place: 'Pucón' }, { text: 'Skips the W Trek', kind: 'hike', skip: true }],
                   phases: [{ name: 'Lakes', stops: [st('Pucón', 'Chile', 10, 'Lakes and volcanoes.', 'fly')] }, { name: 'Patagonia', stops: [st('El Chaltén', 'Argentina', 11, 'Fitz Roy.')] }] },
