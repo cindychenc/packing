@@ -1376,6 +1376,25 @@
   const prefLabels = () => { const p = tripData.trip.prefs || {}; const out = (p.loves || []).slice();
     if (p.fitness && /hike|trek|adventure/i.test(p.fitness)) out.push(String(p.fitness).toLowerCase());
     return out.map(x => String(x).toLowerCase()).filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 8); };
+  /* For trips made before interests were saved (or without any): pick them here, once for the whole trip. */
+  let prefDraft = null;
+  function prefPicker() {
+    const p = tripData.trip.prefs || {};
+    if (!prefDraft) prefDraft = { loves: (p.loves || []).slice(), fitness: p.fitness || null };
+    const NTF = window.SuitcaseNewTrip.FORM;
+    const chip = (on, label, fn) => h('button', { type: 'button', class: 'pmi-pref' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: fn }, label);
+    const save = async () => {
+      const prefs = Object.assign({}, p, { loves: prefDraft.loves, fitness: prefDraft.fitness });
+      const { error } = await sb.from('trips').update({ prefs }).eq('id', tripData.trip.id);
+      if (error) { console.warn('preferences not saved', error.message); }   // still used for this visit
+      tripData.trip.prefs = prefs; prefDraft = null; paintSel();
+    };
+    const any = prefDraft.loves.length || (prefDraft.fitness && /hike|trek|adventure/i.test(prefDraft.fitness));
+    return [h('p', { class: 'pmi-why' }, 'Pick a few. They’re saved with this trip and used for For you at every stop.'),
+      h('div', { class: 'pmi-prefs' }, ...NTF.loves.map(x => chip(prefDraft.loves.includes(x), x, () => { const i = prefDraft.loves.indexOf(x); if (i < 0) prefDraft.loves.push(x); else prefDraft.loves.splice(i, 1); paintSel(); }))),
+      h('div', { class: 'pmi-prefs' }, ...NTF.fitness.map(x => chip(prefDraft.fitness === x, x, () => { prefDraft.fitness = prefDraft.fitness === x ? null : x; paintSel(); }))),
+      h('div', null, h('button', { class: 'btn small primary', disabled: !any, onclick: save }, 'Show ideas for me'))];
+  }
   let selCat = null;            // the open "Find more" list (you / top), or null for the card's top view
   const moreBusy = {}, moreErr = {};
   async function findMore(S, cat) {
@@ -1405,7 +1424,7 @@
   function paintSel() {
     if (!pmap.card || !pmap.card.isConnected) return;
     const S = selInfo(), all = S ? ideasFor(S.s.place) : [];
-    const rec = all.filter(REC).slice(0, 6), cats = S ? (prefLabels().length ? ['you', 'top'] : ['top']) : [];
+    const rec = all.filter(REC).slice(0, 6), cats = S ? ['you', 'top'] : [];
     if (selCat && !cats.includes(selCat)) selCat = null;
     const whole = () => { selDay = null; selIdea = null; selCat = null; document.querySelectorAll('.pcard.live .f-row.sel').forEach(r => r.classList.remove('sel')); paintSel(); };
     pmap.tag.replaceChildren(...[S ? pmap.phaseTag + ' · ' + S.s.place : pmap.phaseTag + ' · ' + plural(pmap.nStops, 'stop'),
@@ -1422,7 +1441,8 @@
       };
       rows = rec.map((x, k) => row(x, k, true));
       const more = selCat ? all.filter(x => x.source === selCat).map((x, k) => row(x, k, false)) : [];
-      const add = x => setDayPlan(day.id, day.plan ? day.plan + ' · ' + x.text : x.text);
+      const add = x => { const cur = tripData.days.find(d => d.id === day.id) || day; if (planParts(cur.plan).includes(normIdea(x.text))) return;   // a double click adds it once
+        setDayPlan(day.id, cur.plan ? cur.plan + ' · ' + x.text : x.text); };
       const remove = x => setDayPlan(day.id, String(day.plan || '').split(' · ').filter(t => normIdea(t) !== normIdea(x.text)).join(' · '));
       const mk = x => h('span', { class: 'pmi-l ' + x.st, 'aria-hidden': 'true' }, x.here ? '✓' : x.letter);
       const open = x => { selIdea = x.id; paintSel(); };
@@ -1439,6 +1459,8 @@
         cur.len || cur.status ? h('span', { class: 'pmi-w' }, cur.len ? 'Takes ' + cur.len : '', cur.len && cur.status ? ' · ' : '', cur.status ? h('b', null, cur.status) : null) : null,
         h('div', null, cur.here ? h('button', { class: 'btn small', onclick: () => remove(cur) }, 'Remove from ' + dn)
           : h('button', { class: 'btn small primary', onclick: () => add(cur) }, cur.other.length ? 'Add to ' + dn + ' too' : 'Add to ' + dn))];
+      else if (selCat === 'you' && !prefLabels().length) kids = [h('button', { class: 'pmi-back', onclick: () => { selCat = null; paintSel(); } }, '‹ Back'),
+        h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), 'What do you like?'), ...prefPicker()];
       else if (selCat) {
         const k = S.s.place + '|' + selCat, busy = moreBusy[k], err = moreErr[k];
         if (!more.length && !busy && !err) setTimeout(() => findMore(S, selCat), 0);   // first time this list is opened for this stop
@@ -1451,7 +1473,8 @@
         rows.length ? h('div', { class: 'pmi-sec' }, 'Recommended ', h('span', null, 'from your route')) : null, ...list(rows),
         h('div', { class: 'pmi-sec' }, rows.length ? 'Find more' : 'Find ideas'),
         h('div', { class: 'pmi-cards' }, ...cats.map(c => h('button', { class: 'pmi-card ' + c, title: c === 'you' ? 'From what you said you like: ' + prefLabels().join(', ') : '',
-          onclick: () => { selCat = c; selIdea = null; paintSel(); } }, h('span', { class: 'pmi-ci', 'aria-hidden': 'true' }, CATS[c].icon), h('b', null, CATS[c].label), h('span', null, CATS[c].sub))))];
+          onclick: () => { selCat = c; selIdea = null; paintSel(); } }, h('span', { class: 'pmi-ci', 'aria-hidden': 'true' }, CATS[c].icon), h('b', null, CATS[c].label),
+          h('span', null, c === 'you' && !prefLabels().length ? 'Tell us what you like' : CATS[c].sub))))];
       pmap.card.replaceChildren(...kids.filter(Boolean));   // replaceChildren would print a null
       pmap.card.setAttribute('aria-label', 'Ideas for ' + dn + ' in ' + S.s.place);
       pmap.card.classList.remove('hidden');

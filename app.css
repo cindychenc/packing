@@ -700,3 +700,6 @@ table.itin.grouped thead th { position: static; }
 .pmi-card .pmi-ci { position: absolute; top: 10px; left: 10px; font-size: 20px; color: #6B5BD6; }
 .pmi-card.you { background: #F7F5FE; border-color: #DCD5F7; }
 .pmi-rs { justify-self: start; font-size: 11px; color: #5A4BC4; background: #F3F0FD; border-radius: 999px; padding: 1px 7px; margin: 1px 0; white-space: nowrap; }
+.pmi-prefs { display: flex; flex-wrap: wrap; gap: 6px; }
+.pmi-pref { font: inherit; font-size: 12px; border: 1px solid #DDD; background: #fff; border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.pmi-pref.on { background: #222; color: #fff; border-color: #222; }
