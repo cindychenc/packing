@@ -645,3 +645,32 @@ tr.addrow td { padding: 0; }
 .g-box { width: 42px; height: 42px; border-radius: 10px; background: #EFEFEF; }
 .g-bar { height: 10px; border-radius: 5px; background: #EFEFEF; }
 table.itin.grouped thead th { position: static; }
+
+/* Planner: the selected day, its stop's ideas on the map, and a suggestion for an empty day */
+.f-row.sel { background: #F6F5FB; border-radius: 10px; box-shadow: inset 3px 0 0 #6B5BD6; }
+.f-sugg { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); padding-left: 8px; min-width: 0; white-space: nowrap; }
+.f-sugg b { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.f-sgi { color: #6B5BD6; }
+.f-use { font: inherit; font-size: 12px; font-weight: 600; border: 1px solid #CCC; background: #fff; border-radius: 7px; padding: 2px 9px; cursor: pointer; flex: none; }
+.f-use:hover, .f-use:focus-visible { border-color: var(--ink); }
+.f-row.hass { padding: 10px 0; }
+.pmap-z { font: inherit; font-size: 12px; border: 0; background: none; text-decoration: underline; cursor: pointer; margin-left: 8px; padding: 0; color: #444; }
+.pmi { position: absolute; left: 10px; right: 10px; bottom: 84px; z-index: 3; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.14); padding: 10px 12px; display: grid; gap: 6px; max-height: 46%; overflow: auto; }
+.pmi.hidden { display: none; }
+.pmi-h { font-size: 12px; font-weight: 700; display: flex; gap: 6px; align-items: center; }
+.pmi-r { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; cursor: pointer; border-radius: 8px; margin: 0 -4px; padding: 3px 4px; }
+.pmi-r:hover, .pmi-r:focus-visible { background: #F5F3FD; outline: 0; }
+.pmi-l { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #6B5BD6; color: #6B5BD6; font-size: 10px; font-weight: 700; display: grid; place-items: center; box-sizing: border-box; flex: none; }
+.pmi-l.here { background: #6B5BD6; color: #fff; }
+.pmi-l.else { background: #D9D4F5; }
+.pmi-c { display: grid; min-width: 0; }
+.pmi-t { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmi-w { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmi-w b { font-weight: 600; color: #6B5BD6; }
+.pmi-back { font: inherit; font-size: 12px; border: 0; background: none; text-decoration: underline; cursor: pointer; padding: 0; justify-self: start; color: #444; }
+.pmi-dt { display: flex; gap: 8px; align-items: center; font-size: 15px; }
+.pmi-why { margin: 0; font-size: 13px; color: #444; }
+.pmk-i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #6B5BD6; background: #fff; color: #6B5BD6; font-family: inherit; font-size: 11px; font-weight: 700; line-height: 1; display: grid; place-items: center; padding: 0; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.pmk-i.here { background: #6B5BD6; color: #fff; }
+.pmk-i.else { background: #D9D4F5; }
+.pmk-i.on { box-shadow: 0 0 0 4px rgba(107,91,214,.3); }   /* not transform: Mapbox positions markers with it */

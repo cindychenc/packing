@@ -805,17 +805,18 @@
 
   /* ───────────── trip page ───────────── */
   async function loadTrip(id) {
-    const [t, d, p, pl] = await Promise.all([
+    const [t, d, p, pl, si] = await Promise.all([
       sb.from('trips').select('*').eq('id', id).maybeSingle(),
       sb.from('days').select('*').eq('trip_id', id).order('idx', { ascending: true }),
       sb.from('phases').select('*').eq('trip_id', id).order('sort', { ascending: true }),
-      sb.from('places').select('name,lat,lng').eq('trip_id', id)
+      sb.from('places').select('name,lat,lng').eq('trip_id', id),
+      sb.from('stop_ideas').select('id,place,text,source,sort').eq('trip_id', id).order('sort', { ascending: true })
     ]);
     const err = t.error || d.error || p.error;
     if (err) throw err;
     if (!t.data) return null;
     datesFor(t.data, d.data);
-    return { trip: t.data, days: d.data, phases: p.data, places: pl.error ? [] : (pl.data || []) };
+    return { trip: t.data, days: d.data, phases: p.data, places: pl.error ? [] : (pl.data || []), ideas: si.error ? [] : (si.data || []) };   // no stop_ideas table yet (migration 005 not run): no ideas
   }
   // Each day's date (only on the client): the trip's start date + its position. None while the trip has no dates.
   function datesFor(trip, days) {
@@ -824,7 +825,7 @@
 
   async function tripView(id, tab) {
     if (!tripData || tripData.trip.id !== id) {
-      loading(); editingDates = false; settingStart = false; curPhase = 0; lastPhase = 0; addingPhase = false; resetDraft(); if (pendingStop) { draft.text = pendingStop.name; draft.pick = pendingStop; pendingStop = null; }
+      loading(); editingDates = false; settingStart = false; curPhase = 0; lastPhase = 0; addingPhase = false; selDay = null; selIdea = null; resetDraft(); if (pendingStop) { draft.text = pendingStop.name; draft.pick = pendingStop; pendingStop = null; }
       try { tripData = await loadTrip(id); }
       catch (e) { show(topbar(), h('main', null, h('div', { class: 'notice warn' }, 'Couldn\'t load this trip: ' + errText(e)))); return; }
       if (!tripData) {
@@ -1101,7 +1102,9 @@
   let curPhase = 0;          // index of the phase card in focus
   let lastPhase = 0;         // for the slide-in direction
   let addingPhase = false;   // the blank "Add a phase" card is in focus
-  let nightsOpen = null;     // the stop whose nights are being changed: phaseId + ':' + its first day
+  let nightsOpen = null;
+  let selDay = null;         // the day in focus: the map zooms to its stop and shows that stop's ideas
+  let selIdea = null;        // the idea whose details are open in the map card     // the stop whose nights are being changed: phaseId + ':' + its first day
   const draft = { text: '', pick: null, nights: 2 };   // the "Add next stop" / first stop input
   const resetDraft = () => { draft.text = ''; draft.pick = null; draft.nights = 2; };
 
@@ -1119,7 +1122,7 @@
     if (curPhase > n - 1) curPhase = Math.max(0, n - 1);
     if (!L.free.length) addingPhase = false;
     const blankOn = !n || addingPhase;
-    const pick = i => { lastPhase = curPhase; curPhase = i; addingPhase = false; openMenu = null; renderTrip('planner'); };
+    const pick = i => { lastPhase = curPhase; curPhase = i; selDay = null; selIdea = null; addingPhase = false; openMenu = null; renderTrip('planner'); };
 
     /* timeline */
     const tl = h('div', { class: 'tl', role: 'tablist', 'aria-label': 'Phases' },
@@ -1180,7 +1183,13 @@
           h('span', { class: 'f-lbl-w' }, h('span', { class: 'f-lbl', style: { background: p.colour || '#888' } }, s.place),
             h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1))), n2));
       }
-      for (let j = s.start; j < s.start + s.n; j++) flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place, j === s.start ? leg : null));
+      // each empty day at a stop gets a different one of the stop's unplanned ideas to pick with one click
+      const pool = s.place ? ideasFor(s.place).filter(x => !planIdx(p, s).has(normIdea(x.text))) : [];
+      let emptyN = 0;
+      for (let j = s.start; j < s.start + s.n; j++) {
+        const sugg = live && s.place && !p.days[j].plan && pool.length ? pool[emptyN++ % pool.length] : null;
+        flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place, j === s.start ? leg : null, { place: s.place, sugg }));
+      }
     });
     if (live) flow.append(stopRow({ placeholder: 'Add next stop', ghostFrom: st + p.days.length, fmt, lastPhase: i === L.phases.length - 1,
       onAdd: (place, pk, nn) => addStopTo(i, place, pk, nn) }));
@@ -1198,59 +1207,167 @@
     boat: LI('M2 18h20a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4zM21 14L10 2 3 14h18zM10 2v16'),
     any: LI('M5 12h14M13 6l6 6-6 6') };
 
-  /* Map of the picked phase's stops, right of the card. One Mapbox GL map, kept across renders and redrawn
-     when the stops change; a still image without GL (no WebGL, or the tests). */
-  const pmap = { el: null, gl: null, key: null, still: false };
+  /* Ideas for a stop: the route's other suggestions (stop_ideas), by place. A day's plan can hold several, joined with " · ". */
+  const normIdea = t => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const ideasFor = place => (tripData.ideas || []).filter(x => x.place === place);
+  const planParts = t => String(t || '').split(' · ').map(normIdea).filter(Boolean);
+  const planIdx = (p, s) => { const set = new Set(); for (let j = s.start; j < s.start + s.n; j++) planParts(p.days[j].plan).forEach(x => set.add(x)); return set; };
+  // "Grey Glacier boat — best on a clear morning (½ day)" → a title, a note and how long it takes
+  function ideaParts(t) {
+    let x = String(t || '').trim(), len = ''; const m = x.match(/\s*\(([^()]{1,24})\)\s*$/); if (m) { len = m[1]; x = x.slice(0, m.index); }
+    const k = x.search(/\s[—–-]\s|:\s/);
+    return k > 0 ? { title: x.slice(0, k).trim(), why: x.slice(k).replace(/^\s*[—–:-]\s*/, '').trim(), len } : { title: x, why: '', len };
+  }
+  const selDayName = idx => (tripData.trip.start_date ? md(LAYOUT.dateAt(tripData.trip.start_date, idx)) : 'Day ' + (idx + 1));
+  function setDayPlan(id, v) {
+    const row = tripData.days.find(x => x.id === id); if (!row) return;
+    row.plan = v || null; const patch = { plan: row.plan };
+    if (row.plan_auto) { row.plan_auto = false; patch.plan_auto = false; }
+    saveDayField(id, patch); renderTrip('planner');
+  }
+  // the selected day's phase, stop and position (null when it isn't a day at a stop in the open phase)
+  function selInfo() {
+    if (!selDay) return null;
+    const L = currentLayout(), p = L.phases[curPhase]; if (!p) return null;
+    const j = p.days.findIndex(x => x.id === selDay); if (j < 0) return null;
+    const s = LAYOUT.stopsOf(p).find(x => j >= x.start && j < x.start + x.n); if (!s || !s.place) return null;
+    return { L, p, j, s, st: LAYOUT.startIdx(L, curPhase) };
+  }
+  function selectDay(id) {
+    if (selDay === id) return;
+    selDay = id; selIdea = null;
+    document.querySelectorAll('.pcard.live .f-row[data-day]').forEach(r => r.classList.toggle('sel', r.dataset.day === id));
+    paintSel();
+  }
+  const placeAt = () => { const at = {}; (tripData.places || []).forEach(x => { if (x.lat != null) at[x.name] = x; }); return at; };
+
+  /* Map of the picked phase's stops, right of the card, with the rest of the trip as muted lines. One Mapbox GL map,
+     kept across renders and redrawn when the stops change; a still image without GL (no WebGL, or the tests).
+     Selecting a day zooms to its stop and shows the stop's ideas: lettered markers around it and a card to add them. */
+  const pmap = { el: null, gl: null, mb: null, key: null, still: false, marks: [], bounds: null, zoomed: false, card: null, tag: null };
   function phaseMap(p, stops) {
     if (!p) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, 'Add a stop to see it on the map.'));
-    const at = {}; (tripData.places || []).forEach(x => { if (x.lat != null) at[x.name] = x; });
+    const at = placeAt(), L = currentLayout();
     const pts = []; stops.forEach(s => { const x = at[s.place]; if (x && !(pts.length && pts[pts.length - 1].place === s.place)) pts.push({ place: s.place, lat: x.lat, lng: x.lng }); });
     if (!pts.length) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, stops.length ? 'These stops aren’t on the map yet.' : 'Add a stop to see it on the map.'));
-    const tag = h('span', { class: 'pmap-tag' }, LAYOUT.nameOf(currentLayout(), curPhase) + ' · ' + plural(stops.length, 'stop'));
-    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>');
-    if (!pmap.el) pmap.el = h('div', { class: 'pmap-in', role: 'img' });
+    // the whole trip in order, to draw the other phases (and the legs into and out of this one) muted
+    const all = []; L.phases.forEach((q, i) => LAYOUT.stopsOf(q).forEach(s => { const x = at[s.place]; if (x && !(all.length && all[all.length - 1].place === s.place)) all.push({ i, place: s.place, lat: x.lat, lng: x.lng }); }));
+    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>') + '|' + all.map(x => x.i + x.place).join('>');
+    if (!pmap.el) {
+      pmap.el = h('div', { class: 'pmap-in', role: 'img' });
+      pmap.tag = h('span', { class: 'pmap-tag' });
+      pmap.card = h('div', { class: 'pmi hidden', role: 'region' });
+    }
     pmap.el.setAttribute('aria-label', 'Map of the stops in this phase: ' + pts.map(x => x.place).join(', '));
-    const box = h('div', { class: 'pmap' }, pmap.el, tag);
-    if (pmap.key === key) { if (pmap.gl) setTimeout(() => pmap.gl.resize(), 0); return box; }
-    pmap.key = key;
+    pmap.phaseTag = LAYOUT.nameOf(L, curPhase);
+    pmap.nStops = stops.length;
+    const box = h('div', { class: 'pmap' }, pmap.el, pmap.tag, pmap.card);
+    const bounds = () => { let a = [180, 90], b = [-180, -90]; pts.forEach(x => { a = [Math.min(a[0], x.lng), Math.min(a[1], x.lat)]; b = [Math.max(b[0], x.lng), Math.max(b[1], x.lat)]; });
+      if (a[0] === b[0] && a[1] === b[1]) { a = [a[0] - 1, a[1] - 1]; b = [b[0] + 1, b[1] + 1]; } return [a, b]; };
+    pmap.bounds = bounds();
+    if (pmap.key === key) { if (pmap.gl) setTimeout(() => pmap.gl.resize(), 0); setTimeout(paintSel, 0); return box; }
+    pmap.key = key; pmap.zoomed = false;
     const colour = p.colour || '#3F5675';
     const still = () => { const url = PLACES.staticMap(pts.map(x => Object.assign({ colour }, x)), 380, 560, { curve: true });
       pmap.el.replaceChildren(url ? h('img', { class: 'pmap-img', src: url, alt: '' }) : ''); };
-    const data = () => {
-      const legs = pts.slice(1).map((x, k) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: PLACES.curved([pts[k], x]).map(c => [c[1], c[0]]) } }));
-      const pins = pts.map((x, k) => ({ type: 'Feature', properties: { n: String(k + 1), name: x.place }, geometry: { type: 'Point', coordinates: [x.lng, x.lat] } }));
-      return { legs: { type: 'FeatureCollection', features: legs }, pins: { type: 'FeatureCollection', features: pins } };
-    };
-    const bounds = () => { let a = [180, 90], b = [-180, -90]; pts.forEach(x => { a = [Math.min(a[0], x.lng), Math.min(a[1], x.lat)]; b = [Math.max(b[0], x.lng), Math.max(b[1], x.lat)]; });
-      if (a[0] === b[0] && a[1] === b[1]) { a = [a[0] - 1, a[1] - 1]; b = [b[0] + 1, b[1] + 1]; } return [a, b]; };
+    const line = (a, b) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: PLACES.curved([a, b]).map(c => [c[1], c[0]]) } });
+    const data = () => ({
+      legs: { type: 'FeatureCollection', features: pts.slice(1).map((x, k) => line(pts[k], x)) },
+      other: { type: 'FeatureCollection', features: all.slice(1).map((x, k) => (all[k].i === curPhase && x.i === curPhase) || all[k].place === x.place ? null : line(all[k], x)).filter(Boolean)
+        .concat(all.filter(x => x.i !== curPhase).map(x => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [x.lng, x.lat] } }))) },
+      pins: { type: 'FeatureCollection', features: pts.map((x, k) => ({ type: 'Feature', properties: { n: String(k + 1), name: x.place }, geometry: { type: 'Point', coordinates: [x.lng, x.lat] } })) }
+    });
+    setTimeout(paintSel, 0);
     if (pmap.still) { still(); return box; }
     loadGL().then(mb => {
-      const paint = m => { const d = data(); m.getSource('legs').setData(d.legs); m.getSource('pins').setData(d.pins);
+      pmap.mb = mb;
+      const paint = m => { const d = data(); m.getSource('legs').setData(d.legs); m.getSource('pins').setData(d.pins); m.getSource('other').setData(d.other);
         m.setPaintProperty('legs', 'line-color', colour); m.setPaintProperty('pins', 'circle-color', colour);
-        m.fitBounds(bounds(), { padding: 50, maxZoom: 9, duration: pmap.drawn ? 500 : 0 }); pmap.drawn = true; };
+        m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+        if (!selInfo()) m.fitBounds(pmap.bounds, { padding: 50, maxZoom: 9, duration: pmap.drawn ? 500 : 0 });
+        pmap.drawn = true; paintSel(); };
       if (pmap.gl) { if (pmap.gl.loaded()) paint(pmap.gl); else pmap.gl.once('load', () => paint(pmap.gl)); setTimeout(() => pmap.gl.resize(), 0); return; }
       mb.accessToken = CFG.mapboxToken;
-      const m = pmap.gl = new mb.Map({ container: pmap.el, style: 'mapbox://styles/mapbox/light-v11', bounds: bounds(), fitBoundsOptions: { padding: 50, maxZoom: 9 },
+      const m = pmap.gl = new mb.Map({ container: pmap.el, style: 'mapbox://styles/mapbox/light-v11', bounds: pmap.bounds, fitBoundsOptions: { padding: 50, maxZoom: 9 },
         dragRotate: false, pitchWithRotate: false, cooperativeGestures: true, attributionControl: false });
       m.addControl(new mb.NavigationControl({ showCompass: false }), 'top-right');
       m.addControl(new mb.AttributionControl({ compact: true }), 'bottom-right');
       if (window.ResizeObserver) new ResizeObserver(() => m.resize()).observe(pmap.el);
       m.on('load', () => {
         const d = data();
-        m.addSource('legs', { type: 'geojson', data: d.legs }); m.addSource('pins', { type: 'geojson', data: d.pins });
+        m.addSource('other', { type: 'geojson', data: d.other }); m.addSource('legs', { type: 'geojson', data: d.legs }); m.addSource('pins', { type: 'geojson', data: d.pins });
+        m.addLayer({ id: 'other', type: 'line', source: 'other', filter: ['==', ['geometry-type'], 'LineString'], paint: { 'line-color': '#B9C4CC', 'line-width': 2 }, layout: { 'line-cap': 'round' } });
+        m.addLayer({ id: 'other-dots', type: 'circle', source: 'other', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 4, 'circle-color': '#B9C4CC' } });
         m.addLayer({ id: 'legs', type: 'line', source: 'legs', paint: { 'line-color': colour, 'line-width': 2.5 }, layout: { 'line-cap': 'round' } });
         m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': 10, 'circle-color': colour, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
         m.addLayer({ id: 'nums', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'n'], 'text-size': 11, 'text-allow-overlap': true }, paint: { 'text-color': '#fff' } });
         m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 12, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-optional': true },
           paint: { 'text-color': '#222', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
-        pmap.drawn = true; m.resize();
+        pmap.drawn = true; m.resize(); paintSel();
       });
     }).catch(e => { pmap.still = true; if (!/fake/.test(e.message || '')) console.warn('map', e); still(); });
     return box;
   }
 
+  // The map's label, its ideas card and markers, and its zoom, for the selected day (or the whole phase).
+  function paintSel() {
+    if (!pmap.card || !pmap.card.isConnected) return;
+    const S = selInfo(), ideas = S ? ideasFor(S.s.place).slice(0, 6) : [];
+    const whole = () => { selDay = null; selIdea = null; document.querySelectorAll('.pcard.live .f-row.sel').forEach(r => r.classList.remove('sel')); paintSel(); };
+    pmap.tag.replaceChildren(...[S ? pmap.phaseTag + ' · ' + S.s.place : pmap.phaseTag + ' · ' + plural(pmap.nStops, 'stop'),
+      S ? h('button', { class: 'pmap-z', onclick: whole }, 'Whole phase') : null].filter(Boolean));
+    let rows = [];
+    if (S && ideas.length) {
+      const day = S.p.days[S.j], mine = planParts(day.plan), dn = selDayName(S.st + S.j);
+      rows = ideas.map((x, k) => {
+        const n = normIdea(x.text), here = mine.includes(n), other = [];
+        for (let jj = S.s.start; jj < S.s.start + S.s.n; jj++) if (jj !== S.j && planParts(S.p.days[jj].plan).includes(n)) other.push(selDayName(S.st + jj));
+        return Object.assign({ id: x.id, text: x.text, letter: 'ABCDEF'[k], here, other, st: here ? 'here' : other.length ? 'else' : 'new',
+          status: here ? 'In ' + dn : other.length ? 'Planned on ' + other.join(', ') : '' }, ideaParts(x.text));
+      });
+      const add = x => setDayPlan(day.id, day.plan ? day.plan + ' · ' + x.text : x.text);
+      const remove = x => setDayPlan(day.id, String(day.plan || '').split(' · ').filter(t => normIdea(t) !== normIdea(x.text)).join(' · '));
+      const mk = x => h('span', { class: 'pmi-l ' + x.st, 'aria-hidden': 'true' }, x.here ? '✓' : x.letter);
+      const open = x => { selIdea = x.id; paintSel(); };
+      const cur = rows.find(x => x.id === selIdea);
+      if (cur) pmap.card.replaceChildren(...[
+        h('button', { class: 'pmi-back', onclick: () => { selIdea = null; paintSel(); } }, '‹ All ideas'),
+        h('div', { class: 'pmi-dt' }, mk(cur), h('strong', null, cur.title)),
+        cur.why ? h('p', { class: 'pmi-why' }, cur.why) : null,
+        cur.len || cur.status ? h('span', { class: 'pmi-w' }, cur.len ? 'Takes ' + cur.len : '', cur.len && cur.status ? ' · ' : '', cur.status ? h('b', null, cur.status) : null) : null,
+        h('div', null, cur.here ? h('button', { class: 'btn small', onclick: () => remove(cur) }, 'Remove from ' + dn)
+          : h('button', { class: 'btn small primary', onclick: () => add(cur) }, cur.other.length ? 'Add to ' + dn + ' too' : 'Add to ' + dn))].filter(Boolean));   // replaceChildren would print a null
+      else pmap.card.replaceChildren(h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), 'Ideas for ' + dn + ' · ' + S.s.place),
+        ...rows.map(x => h('div', { class: 'pmi-r' + (x.here ? ' in' : ''), role: 'button', tabindex: '0', title: 'Details', onclick: () => open(x), onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) open(x); } },
+          mk(x), h('span', { class: 'pmi-c' }, h('span', { class: 'pmi-t' }, x.title), h('span', { class: 'pmi-w' }, x.status ? h('b', null, x.status) : null, x.status && (x.why || x.len) ? ' · ' : '', x.why || x.len)),
+          h('button', { class: 'f-use', 'aria-label': (x.here ? 'Remove ' : 'Add ') + x.title + (x.here ? ' from ' : ' to ') + dn, onclick: e => { e.stopPropagation(); if (x.here) remove(x); else add(x); } }, x.here ? 'Remove' : 'Add'))));
+      pmap.card.setAttribute('aria-label', 'Ideas for ' + dn + ' in ' + S.s.place);
+      pmap.card.classList.remove('hidden');
+    } else { pmap.card.classList.add('hidden'); pmap.card.replaceChildren(); }
+    camera(S, rows);
+  }
+  function camera(S, rows) {
+    const m = pmap.gl; if (!m || !m.loaded() || !pmap.mb) return;
+    pmap.marks.forEach(x => x.remove()); pmap.marks = [];
+    const pt = S && placeAt()[S.s.place];
+    if (!pt) {
+      if (pmap.zoomed) { pmap.zoomed = false; m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }); m.fitBounds(pmap.bounds, { padding: 50, maxZoom: 9, duration: 500 }); }
+      return;
+    }
+    pmap.zoomed = true;
+    // the stop sits in the top part of the map, above the ideas card
+    m.easeTo({ center: [pt.lng, pt.lat], zoom: 10, padding: { top: 0, left: 0, right: 0, bottom: rows.length ? Math.round((pmap.el.clientHeight || 600) * .45) : 0 }, duration: 600 });
+    rows.forEach((x, k) => {
+      const a = -Math.PI / 2 + (k + .5) * 2 * Math.PI / Math.max(rows.length, 3);
+      const el = h('button', { class: 'pmk-i ' + x.st + (selIdea === x.id ? ' on' : ''), title: x.title, 'aria-label': 'Idea: ' + x.title + (x.status ? ' (' + x.status + ')' : ''),
+        onclick: e => { e.stopPropagation(); selIdea = selIdea === x.id ? null : x.id; paintSel(); } }, x.here ? '✓' : x.letter);
+      pmap.marks.push(new pmap.mb.Marker({ element: el, offset: [Math.round(Math.cos(a) * 62), Math.round(Math.sin(a) * 62)] }).setLngLat([pt.lng, pt.lat]).addTo(m));
+    });
+  }
+
   const AUTO_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.9zM19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>';
-  function flowDay(L, i, j, idx, fmt, live, free, leg) {
+  function flowDay(L, i, j, idx, fmt, live, free, leg, o) {
+    o = o || {};
     const d = L.phases[i].days[j], row = tripData.days.find(x => x.id === d.id), date = fmt.dateAt(idx);
     const box = h('span', { class: 'f-day' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]);
     const rm = live ? h('button', { class: 'dx', 'aria-label': 'Remove ' + fmt.shortDay(idx), title: 'Remove this day', onclick: () => tryLayout(LAYOUT.removeDay(currentLayout(), i, j)) }, '×') : null;
@@ -1266,7 +1383,7 @@
     const mark = auto ? h('span', { class: 'f-auto', title: 'Filled in from your route · edit it to make it yours', 'aria-label': 'Filled in from your route', role: 'img' }, svg(AUTO_ICON)) : null;
     // the transfer shows on the day it happens: the first day at a new stop. Its mode is read from that day's plan, if it says.
     const xfer = leg ? h('span', { class: 'f-xfer' }, svg(LEG_ICON[legMode(d.plan)]), leg.from + ' → ' + leg.to) : null;
-    const rowCls = 'f-row' + (xfer ? ' hasx' : '');
+    const rowCls = 'f-row' + (xfer ? ' hasx' : '') + (live && selDay === d.id ? ' sel' : '');
     if (!live) return h('div', { class: rowCls }, box, h('span', { class: 'f-col' }, h('span', { class: 'f-plan' + (d.plan ? '' : ' muted') }, d.plan || 'No plan yet', mark), xfer));
     const plan = h('input', { class: 'f-in', value: d.plan || '', placeholder: 'Add a plan', 'aria-label': 'Plan for ' + fmt.shortDay(idx) });
     plan.addEventListener('input', () => {
@@ -1277,7 +1394,13 @@
     });
     plan.addEventListener('keydown', e => { if (e.key === 'Enter') plan.blur(); });
     const field = mark ? h('span', { class: 'f-pw' }, plan, mark) : plan;
-    return h('div', { class: rowCls }, box, xfer ? h('span', { class: 'f-col' }, field, xfer) : field, rm);
+    const sugg = o.sugg ? h('span', { class: 'f-sugg', title: 'Suggested in your route' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), h('b', null, ideaParts(o.sugg.text).title),
+      h('button', { class: 'f-use', 'aria-label': 'Use “' + o.sugg.text + '” for ' + fmt.shortDay(idx), onclick: e => { e.stopPropagation(); setDayPlan(d.id, o.sugg.text); } }, 'Use')) : null;
+    const col = xfer || sugg ? h('span', { class: 'f-col' }, field, sugg, xfer) : field;
+    const el = h('div', { class: rowCls + (sugg ? ' hass' : ''), 'data-day': d.id }, box, col, rm);
+    // focusing a day (typing in it or clicking the row) zooms the map to its stop and shows the stop's ideas
+    if (o.place) { el.addEventListener('focusin', () => selectDay(d.id)); el.addEventListener('click', () => selectDay(d.id)); }
+    return el;
   }
 
   // – N nights +

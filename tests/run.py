@@ -396,6 +396,38 @@ try:
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
         d0 = [d for d in db['days'] if d['trip_id'] == t['id'] and d['idx'] == 0][0]
         ok(d0['plan'] == 'Arrive, then the Lastarria walk' and d0['plan_auto'] is False, 'editing a prefilled plan makes it yours')
+
+        # a day's stop ideas: select a day in Puerto Natales, see its ideas on the map, add one, open another's details
+        page.click('.tl-ph:has-text("Patagonia")'); page.wait_for_selector('.pcard.live .f-stop:has-text("Puerto Natales")')
+        pn = page.evaluate('''() => { const out = []; let on = false; for (const el of document.querySelectorAll('.pcard.live .flow > *')) {
+          if (el.classList.contains('f-stop')) on = el.textContent.includes('Puerto Natales'); else if (on && el.dataset.day) out.push(el.dataset.day); } return out; }''')
+        ok(not page.is_visible('.pmi'), 'no ideas card until a day is picked')
+        sugg = page.inner_text('.pcard.live .f-sugg') if page.query_selector('.pcard.live .f-sugg') else ''
+        page.click(f'.f-row[data-day="{pn[0]}"] .f-in'); page.wait_for_selector('.pmi:not(.hidden)')
+        ok('Grey Glacier boat' in page.inner_text('.pmi') and 'Milodon Cave' in page.inner_text('.pmi') and 'Puerto Natales' in page.inner_text('.pmap-tag')
+           and page.is_visible('.pmap-z') and page.query_selector(f'.f-row.sel[data-day="{pn[0]}"]'), "picking a day shows its stop's ideas on the map")
+        page.click('.pmi-r:has-text("Grey Glacier boat") .f-use'); page.wait_for_timeout(400)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        dd = [d for d in db['days'] if d['id'] == pn[0]][0]
+        ok(dd['plan'] == 'Fly from Pucón · Grey Glacier boat' and dd['plan_auto'] is False, f"an idea is added to the day's plan ({dd['plan']!r})")
+        ok('In ' in page.inner_text('.pmi-r:has-text("Grey Glacier boat")') and page.is_visible('.pmi-r:has-text("Grey Glacier boat") .pmi-l.here'), 'the idea shows it is in this day')
+        page.click('.pmi-r:has-text("Milodon Cave")'); page.wait_for_selector('.pmi-back')
+        ok(page.is_visible('.pmi button:has-text("Add to")'), 'an idea opens its details')
+        page.click('.pmi button:has-text("Add to")'); page.wait_for_timeout(400)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        ok([d for d in db['days'] if d['id'] == pn[0]][0]['plan'] == 'Fly from Pucón · Grey Glacier boat · Milodon Cave', 'a day can hold several ideas')
+        page.screenshot(path=str(SHOTS / '13d-ideas.png'))
+        page.click('.pmi-back'); page.click('.pmi-r:has-text("Grey Glacier boat") .f-use:has-text("Remove")'); page.wait_for_timeout(400)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        ok([d for d in db['days'] if d['id'] == pn[0]][0]['plan'] == 'Fly from Pucón · Milodon Cave', 'remove takes just that idea out')
+        page.click('.pmap-z'); page.wait_for_timeout(100)
+        ok(not page.is_visible('.pmi') and not page.query_selector('.f-row.sel'), 'whole phase clears the day')
+        ok(sugg == '', 'no suggestion while every day at the stop is planned')
+        page.fill(f'.f-row[data-day="{pn[2]}"] .f-in', ''); page.wait_for_timeout(700); page.click('.tl-ph:has-text("Central Chile")'); page.click('.tl-ph:has-text("Patagonia")')
+        ok(page.inner_text(f'.f-row[data-day="{pn[2]}"] .f-sugg').startswith('✦') and 'Grey Glacier boat' in page.inner_text(f'.f-row[data-day="{pn[2]}"] .f-sugg'), 'an empty day suggests an idea not yet planned')
+        page.click(f'.f-row[data-day="{pn[2]}"] .f-use'); page.wait_for_timeout(400)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        ok([d for d in db['days'] if d['id'] == pn[2]][0]['plan'] == 'Grey Glacier boat' and not page.query_selector('.f-sugg'), 'use puts it on the day')
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
 
         # 9f. import: pasted rows, then an .xlsx file
