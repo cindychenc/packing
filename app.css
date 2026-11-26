@@ -681,3 +681,22 @@ table.itin.grouped thead th { position: static; }
 .mdeco-loop { pointer-events: none; width: 120px; height: 120px; }
 .mdeco-loop svg { display: block; }
 .zoomed .mdeco.act, .zoomed .mdeco-loop { display: none; }
+
+/* Planner: where you sleep (shown, not working yet) */
+.f-row.hasstay { grid-template-columns: 44px minmax(0, 1fr) 150px 28px; }
+.f-stay { align-self: stretch; display: flex; align-items: center; border-left: 1px solid #F0F0F0; padding-left: 10px; min-width: 0; }
+.f-stay.cont::before { content: ''; width: 1px; align-self: stretch; margin: -6px 0 -6px 7px; background: #DDD; }
+.f-stay-b { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.f-bed { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px dashed #BBB; border-radius: 50%; flex: none; }
+
+/* Ideas card: Recommended, then "Find more" cards; a card opens its own list */
+.pmi-sec { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #555; margin-top: 4px; }
+.pmi-sec span { font-weight: 400; text-transform: none; letter-spacing: 0; color: #888; }
+.pmi-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.pmi-card { font: inherit; text-align: left; aspect-ratio: 1 / .75; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; padding: 10px; border: 1px solid #E2E2E2; border-radius: 10px; background: #FAFAFA; cursor: pointer; position: relative; color: inherit; }
+.pmi-card:hover, .pmi-card:focus-visible { border-color: var(--ink); }
+.pmi-card b { font-size: 14px; }
+.pmi-card span { font-size: 11px; color: var(--text2); }
+.pmi-card .pmi-ci { position: absolute; top: 10px; left: 10px; font-size: 20px; color: #6B5BD6; }
+.pmi-card.you { background: #F7F5FE; border-color: #DCD5F7; }
+.pmi-rs { justify-self: start; font-size: 11px; color: #5A4BC4; background: #F3F0FD; border-radius: 999px; padding: 1px 7px; margin: 1px 0; white-space: nowrap; }

@@ -420,6 +420,27 @@ try:
         page.click('.pmi-back'); page.click('.pmi-r:has-text("Grey Glacier boat") .f-use:has-text("Remove")'); page.wait_for_timeout(400)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
         ok([d for d in db['days'] if d['id'] == pn[0]][0]['plan'] == 'Fly from Pucón · Milodon Cave', 'remove takes just that idea out')
+        # Find more: For you (from the trip's saved interests) and Top visited, each its own list with a way back
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        tp = [t for t in db['trips'] if t['name'] == 'Patagonia'][0]
+        ok(tp.get('prefs', {}).get('loves') == ['outdoor adventure', 'markets'], f"the trip keeps what they said they like ({tp.get('prefs')!r})")
+        ok(page.is_visible('.pmi-card.you') and page.is_visible('.pmi-card.top') and 'recommended' in page.inner_text('.pmi').lower(), 'the card shows Recommended, then For you and Top visited')
+        ok(page.query_selector('.f-row[data-day] .f-stay-b') is not None and 'Add a stay' in page.inner_text('.f-stay-b >> nth=0'), 'each stop shows where you sleep (not working yet)')
+        page.click('.pmi-card.you'); page.wait_for_selector('.pmi-r:has-text("Puerto Natales market")')
+        inv = page.evaluate('window.__lastInvoke')
+        ok(inv['name'] == 'stop-ideas' and inv['body']['kind'] == 'you' and inv['body']['place'] == 'Puerto Natales' and inv['body']['prefs'] == ['outdoor adventure', 'markets', 'multi-day treks']
+           and 'Grey Glacier boat' in inv['body']['have'], 'For you asks for that stop with their interests, and what it has')
+        ok('You like outdoor adventure' in page.inner_text('.pmi') and not page.query_selector('.pmi-r:has-text("Grey Glacier boat")') and page.is_visible('.pmi-back'),
+           'each idea says why, ones the stop already has are left out, and there is a way back')
+        page.click('.pmi-r:has-text("Sea kayak in the fjord") .f-use'); page.wait_for_timeout(400)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        ok([d for d in db['days'] if d['id'] == pn[0]][0]['plan'].endswith('· Sea kayak in the fjord') and any(x['source'] == 'you' and x['reason'] == 'You like outdoor adventure' for x in db['stop_ideas']),
+           'a For you idea is added to the day and kept with the trip')
+        n = len(db['stop_ideas']); page.click('.pmi-back'); page.click('.pmi-card.you'); page.wait_for_timeout(300)
+        ok(len(page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")['stop_ideas']) == n and page.is_visible('.pmi-r:has-text("Sea kayak")'), 'opening it again uses what was kept')
+        page.click('.pmi-back'); page.click('.pmi-card.top'); page.wait_for_selector('.pmi-r:has-text("Mirador Dorotea hike")')
+        ok(page.evaluate('window.__lastInvoke')['body']['kind'] == 'top', 'Top visited asks for the top list')
+        page.click('.pmi-back')
         page.click('.pmap-z'); page.wait_for_timeout(100)
         ok(not page.is_visible('.pmi') and not page.query_selector('.f-row.sel'), 'whole phase clears the day')
         ok(sugg == '', 'no suggestion while every day at the stop is planned')

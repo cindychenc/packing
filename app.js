@@ -776,6 +776,9 @@
           ({ data, error } = await sb.from('trips').insert(fields).select().single());
         }
         if (error) { fail(errText(error)); return; }
+        // what they said they like, for "For you" ideas later (needs migration 006; skipped before it)
+        const ask = NT.request(st.ans, ctx()), prefs = { loves: ask.loves || [], fitness: ask.fitness || null, who: ask.who || null, pace: ask.pace || null };
+        if (prefs.loves.length || prefs.fitness) sb.from('trips').update({ prefs }).eq('id', data.id).then(x => { if (x && x.error) console.warn('preferences not saved', x.error.message); });
         if (layout) {
           const rows = LAYOUT.toRows(layout);
           const r = await sb.rpc('apply_layout', { p_trip: data.id, p_expect: data.updated_at, p_phases: rows.phases, p_days: rows.days });
@@ -810,8 +813,8 @@
       sb.from('trips').select('*').eq('id', id).maybeSingle(),
       sb.from('days').select('*').eq('trip_id', id).order('idx', { ascending: true }),
       sb.from('phases').select('*').eq('trip_id', id).order('sort', { ascending: true }),
-      sb.from('places').select('name,lat,lng').eq('trip_id', id),
-      sb.from('stop_ideas').select('id,place,text,source,sort').eq('trip_id', id).order('sort', { ascending: true })
+      sb.from('places').select('name,lat,lng,country').eq('trip_id', id),
+      sb.from('stop_ideas').select('*').eq('trip_id', id).order('sort', { ascending: true })
     ]);
     const err = t.error || d.error || p.error;
     if (err) throw err;
@@ -1185,11 +1188,11 @@
             h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1))), n2));
       }
       // each empty day at a stop gets a different one of the stop's unplanned ideas to pick with one click
-      const pool = s.place ? ideasFor(s.place).filter(x => !planIdx(p, s).has(normIdea(x.text))) : [];
+      const pool = s.place ? ideasFor(s.place).filter(x => REC(x) && !planIdx(p, s).has(normIdea(x.text))) : [];
       let emptyN = 0;
       for (let j = s.start; j < s.start + s.n; j++) {
         const sugg = live && s.place && !p.days[j].plan && pool.length ? pool[emptyN++ % pool.length] : null;
-        flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place, j === s.start ? leg : null, { place: s.place, sugg }));
+        flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place, j === s.start ? leg : null, { place: s.place, sugg, first: j === s.start }));
       }
     });
     if (live) flow.append(stopRow({ placeholder: 'Add next stop', ghostFrom: st + p.days.length, fmt, lastPhase: i === L.phases.length - 1,
@@ -1289,7 +1292,7 @@
   }
   function selectDay(id) {
     if (selDay === id) return;
-    selDay = id; selIdea = null;
+    selDay = id; selIdea = null; selCat = null;
     document.querySelectorAll('.pcard.live .f-row[data-day]').forEach(r => r.classList.toggle('sel', r.dataset.day === id));
     paintSel();
   }
@@ -1369,37 +1372,90 @@
   }
 
   // The map's label, its ideas card and markers, and its zoom, for the selected day (or the whole phase).
+  /* "Find more" for a stop: For you (from the trip's saved interests) and Top visited. stop-ideas asks Claude once per
+     place (shared cache), and the results are kept with the trip in stop_ideas, so opening them again costs nothing. */
+  const CATS = { you: { label: 'For you', icon: '✦', sub: 'Picked from what you like' }, top: { label: 'Top visited', icon: '★', sub: 'What most people see here' } };
+  const REC = x => !x.source || x.source === 'route' || x.source === 'mine' || x.source === 'claude';
+  const prefLabels = () => { const p = tripData.trip.prefs || {}; const out = (p.loves || []).slice();
+    if (p.fitness && /hike|trek|adventure/i.test(p.fitness)) out.push(String(p.fitness).toLowerCase());
+    return out.map(x => String(x).toLowerCase()).filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 8); };
+  let selCat = null;            // the open "Find more" list (you / top), or null for the card's top view
+  const moreBusy = {}, moreErr = {};
+  async function findMore(S, cat) {
+    const k = S.s.place + '|' + cat; if (moreBusy[k]) return;
+    moreBusy[k] = true; delete moreErr[k]; paintSel();
+    const at = placeAt()[S.s.place] || {}, d0 = LAYOUT.dateAt(tripData.trip.start_date, S.st + S.s.start);
+    const have = ideasFor(S.s.place).map(x => x.text);
+    const { data, error } = await sb.functions.invoke('stop-ideas', { body: { kind: cat, place: S.s.place, country: at.country || '', month: d0 ? +d0.slice(5, 7) - 1 : null, prefs: cat === 'you' ? prefLabels() : [], have } });
+    delete moreBusy[k];
+    if (error || !data || !Array.isArray(data.ideas)) {
+      let m = 'Couldn’t find ideas just now. Try again in a minute.';
+      try { const j = error && error.context && await error.context.json(); if (j && j.error) m = j.error; } catch (e) { /* keep the plain message */ }
+      moreErr[k] = m; paintSel(); return;
+    }
+    const seen = new Set(have.map(normIdea));
+    const rows = data.ideas.filter(x => x && x.title && !seen.has(normIdea(x.title)) && seen.add(normIdea(x.title))).map((x, i) => ({ trip_id: tripData.trip.id, place: S.s.place, text: x.title.slice(0, 300),
+      note: x.note ? x.note.slice(0, 300) : null, len: x.len ? x.len.slice(0, 40) : null, reason: x.because ? ('You like ' + x.because).slice(0, 80) : null, source: cat, sort: 1000 + i }));
+    if (rows.length) {
+      const ins = await sb.from('stop_ideas').insert(rows).select();
+      if (ins.error) { console.warn('ideas not saved', ins.error.message); rows.forEach((x, i) => { x.id = 'tmp-' + cat + '-' + Date.now() + '-' + i; }); }   // still shown this time
+      (tripData.ideas = tripData.ideas || []).push(...(ins.error ? rows : ins.data));
+    } else moreErr[k] = 'Nothing new turned up for ' + S.s.place + '.';
+    paintSel();
+  }
+
+  // The map's label, its ideas card and markers, and its zoom, for the selected day (or the whole phase).
   function paintSel() {
     if (!pmap.card || !pmap.card.isConnected) return;
-    const S = selInfo(), ideas = S ? ideasFor(S.s.place).slice(0, 6) : [];
-    const whole = () => { selDay = null; selIdea = null; document.querySelectorAll('.pcard.live .f-row.sel').forEach(r => r.classList.remove('sel')); paintSel(); };
+    const S = selInfo(), all = S ? ideasFor(S.s.place) : [];
+    const rec = all.filter(REC).slice(0, 6), cats = S ? (prefLabels().length ? ['you', 'top'] : ['top']) : [];
+    if (selCat && !cats.includes(selCat)) selCat = null;
+    const whole = () => { selDay = null; selIdea = null; selCat = null; document.querySelectorAll('.pcard.live .f-row.sel').forEach(r => r.classList.remove('sel')); paintSel(); };
     pmap.tag.replaceChildren(...[S ? pmap.phaseTag + ' · ' + S.s.place : pmap.phaseTag + ' · ' + plural(pmap.nStops, 'stop'),
       S ? h('button', { class: 'pmap-z', onclick: whole }, 'Whole phase') : null].filter(Boolean));
     let rows = [];
-    if (S && ideas.length) {
+    if (S) {
       const day = S.p.days[S.j], mine = planParts(day.plan), dn = selDayName(S.st + S.j);
-      rows = ideas.map((x, k) => {
+      const row = (x, k, onMap) => {
         const n = normIdea(x.text), here = mine.includes(n), other = [];
         for (let jj = S.s.start; jj < S.s.start + S.s.n; jj++) if (jj !== S.j && planParts(S.p.days[jj].plan).includes(n)) other.push(selDayName(S.st + jj));
-        return Object.assign({ id: x.id, text: x.text, letter: 'ABCDEF'[k], here, other, st: here ? 'here' : other.length ? 'else' : 'new',
-          status: here ? 'In ' + dn : other.length ? 'Planned on ' + other.join(', ') : '' }, ideaParts(x.text));
-      });
+        const parts = x.note || x.len ? { title: x.text, why: x.note || '', len: x.len || '' } : ideaParts(x.text);
+        return Object.assign({ id: x.id, text: x.text, letter: onMap ? 'ABCDEF'[k] : '+', reason: x.reason || '', here, other, st: here ? 'here' : other.length ? 'else' : 'new',
+          status: here ? 'In ' + dn : other.length ? 'Planned on ' + other.join(', ') : '' }, parts);
+      };
+      rows = rec.map((x, k) => row(x, k, true));
+      const more = selCat ? all.filter(x => x.source === selCat).map((x, k) => row(x, k, false)) : [];
       const add = x => setDayPlan(day.id, day.plan ? day.plan + ' · ' + x.text : x.text);
       const remove = x => setDayPlan(day.id, String(day.plan || '').split(' · ').filter(t => normIdea(t) !== normIdea(x.text)).join(' · '));
       const mk = x => h('span', { class: 'pmi-l ' + x.st, 'aria-hidden': 'true' }, x.here ? '✓' : x.letter);
       const open = x => { selIdea = x.id; paintSel(); };
-      const cur = rows.find(x => x.id === selIdea);
-      if (cur) pmap.card.replaceChildren(...[
-        h('button', { class: 'pmi-back', onclick: () => { selIdea = null; paintSel(); } }, '‹ All ideas'),
-        h('div', { class: 'pmi-dt' }, mk(cur), h('strong', null, cur.title)),
+      const tag = x => x.reason ? h('span', { class: 'pmi-rs' }, h('span', { 'aria-hidden': 'true' }, '✦ '), x.reason) : null;
+      const list = xs => xs.map(x => h('div', { class: 'pmi-r' + (x.here ? ' in' : ''), role: 'button', tabindex: '0', title: 'Details', onclick: () => open(x), onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) open(x); } },
+        mk(x), h('span', { class: 'pmi-c' }, ...[h('span', { class: 'pmi-t' }, x.title), tag(x), h('span', { class: 'pmi-w' }, x.status ? h('b', null, x.status) : null, x.status && (x.why || x.len) ? ' · ' : '', x.why || x.len)].filter(Boolean)),
+        h('button', { class: 'f-use', 'aria-label': (x.here ? 'Remove ' : 'Add ') + x.title + (x.here ? ' from ' : ' to ') + dn, onclick: e => { e.stopPropagation(); if (x.here) remove(x); else add(x); } }, x.here ? 'Remove' : 'Add')));
+      const cur = rows.concat(more).find(x => x.id === selIdea);
+      let kids;
+      if (cur) kids = [
+        h('button', { class: 'pmi-back', onclick: () => { selIdea = null; paintSel(); } }, selCat ? '‹ ' + CATS[selCat].label : '‹ All ideas'),
+        h('div', { class: 'pmi-dt' }, mk(cur), h('strong', null, cur.title)), tag(cur),
         cur.why ? h('p', { class: 'pmi-why' }, cur.why) : null,
         cur.len || cur.status ? h('span', { class: 'pmi-w' }, cur.len ? 'Takes ' + cur.len : '', cur.len && cur.status ? ' · ' : '', cur.status ? h('b', null, cur.status) : null) : null,
         h('div', null, cur.here ? h('button', { class: 'btn small', onclick: () => remove(cur) }, 'Remove from ' + dn)
-          : h('button', { class: 'btn small primary', onclick: () => add(cur) }, cur.other.length ? 'Add to ' + dn + ' too' : 'Add to ' + dn))].filter(Boolean));   // replaceChildren would print a null
-      else pmap.card.replaceChildren(h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), 'Ideas for ' + dn + ' · ' + S.s.place),
-        ...rows.map(x => h('div', { class: 'pmi-r' + (x.here ? ' in' : ''), role: 'button', tabindex: '0', title: 'Details', onclick: () => open(x), onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) open(x); } },
-          mk(x), h('span', { class: 'pmi-c' }, h('span', { class: 'pmi-t' }, x.title), h('span', { class: 'pmi-w' }, x.status ? h('b', null, x.status) : null, x.status && (x.why || x.len) ? ' · ' : '', x.why || x.len)),
-          h('button', { class: 'f-use', 'aria-label': (x.here ? 'Remove ' : 'Add ') + x.title + (x.here ? ' from ' : ' to ') + dn, onclick: e => { e.stopPropagation(); if (x.here) remove(x); else add(x); } }, x.here ? 'Remove' : 'Add'))));
+          : h('button', { class: 'btn small primary', onclick: () => add(cur) }, cur.other.length ? 'Add to ' + dn + ' too' : 'Add to ' + dn))];
+      else if (selCat) {
+        const k = S.s.place + '|' + selCat, busy = moreBusy[k], err = moreErr[k];
+        if (!more.length && !busy && !err) setTimeout(() => findMore(S, selCat), 0);   // first time this list is opened for this stop
+        kids = [h('button', { class: 'pmi-back', onclick: () => { selCat = null; paintSel(); } }, '‹ Back'),
+          h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, CATS[selCat].icon), CATS[selCat].label + ' in ' + S.s.place),
+          ...list(more),
+          busy || (!more.length && !err) ? h('p', { class: 'pmi-why muted', role: 'status' }, 'Finding ideas…') : null,
+          err ? h('p', { class: 'pmi-why', role: 'alert' }, err + ' ', h('button', { class: 'pmi-back', onclick: () => { delete moreErr[k]; findMore(S, selCat); } }, 'Try again')) : null];
+      } else kids = [h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), 'Ideas for ' + dn + ' · ' + S.s.place),
+        rows.length ? h('div', { class: 'pmi-sec' }, 'Recommended ', h('span', null, 'from your route')) : null, ...list(rows),
+        h('div', { class: 'pmi-sec' }, rows.length ? 'Find more' : 'Find ideas'),
+        h('div', { class: 'pmi-cards' }, ...cats.map(c => h('button', { class: 'pmi-card ' + c, title: c === 'you' ? 'From what you said you like: ' + prefLabels().join(', ') : '',
+          onclick: () => { selCat = c; selIdea = null; paintSel(); } }, h('span', { class: 'pmi-ci', 'aria-hidden': 'true' }, CATS[c].icon), h('b', null, CATS[c].label), h('span', null, CATS[c].sub))))];
+      pmap.card.replaceChildren(...kids.filter(Boolean));   // replaceChildren would print a null
       pmap.card.setAttribute('aria-label', 'Ideas for ' + dn + ' in ' + S.s.place);
       pmap.card.classList.remove('hidden');
     } else { pmap.card.classList.add('hidden'); pmap.card.replaceChildren(); }
@@ -1457,7 +1513,10 @@
     const sugg = o.sugg ? h('span', { class: 'f-sugg', title: 'Suggested in your route' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), h('b', null, ideaParts(o.sugg.text).title),
       h('button', { class: 'f-use', 'aria-label': 'Use “' + o.sugg.text + '” for ' + fmt.shortDay(idx), onclick: e => { e.stopPropagation(); setDayPlan(d.id, o.sugg.text); } }, 'Use')) : null;
     const col = xfer || sugg ? h('span', { class: 'f-col' }, field, sugg, xfer) : field;
-    const el = h('div', { class: rowCls + (sugg ? ' hass' : ''), 'data-day': d.id }, box, col, rm);
+    // Where you sleep: shown, not working yet (stays come later). The stop's first night carries it, the others a line.
+    const stay = live && o.place ? h('span', { class: 'f-stay' + (o.first ? '' : ' cont') }, o.first ? h('span', { class: 'f-stay-b', title: 'Stays are coming soon', 'aria-disabled': 'true' },
+      h('span', { class: 'f-bed', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="' + HL_ICONS.stay + '"/></svg>' }), 'Add a stay') : null) : null;
+    const el = h('div', { class: rowCls + (sugg ? ' hass' : '') + (stay ? ' hasstay' : ''), 'data-day': d.id }, ...[box, col, stay, rm].filter(Boolean));
     // focusing a day (typing in it or clicking the row) zooms the map to its stop and shows the stop's ideas
     if (o.place) { el.addEventListener('focusin', () => selectDay(d.id)); el.addEventListener('click', () => selectDay(d.id)); }
     return el;

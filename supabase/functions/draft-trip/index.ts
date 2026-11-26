@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
 
   // Daily limit.
   const since = new Date(Date.now() - 24 * 3600e3).toISOString();
-  const { count } = await sb.from('ai_drafts').select('id', { count: 'exact', head: true }).gte('created_at', since);
+  const { count } = await sb.from('ai_drafts').select('id', { count: 'exact', head: true }).gte('created_at', since).neq('kind', 'ideas');   // ideas have their own limit (stop-ideas)
   if ((count ?? 0) >= DAILY_LIMIT) return reply(429, { error: `That's ${DAILY_LIMIT} drafts today. Try again tomorrow.` });
   await sb.from('ai_drafts').insert({ kind: 'inspire' });   // a tweak counts as a draft too
 

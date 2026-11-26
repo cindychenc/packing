@@ -135,6 +135,12 @@
             const b = (opts && opts.body) || {};
             window.__lastInvoke = { name, body: b };
             await new Promise(r => setTimeout(r, 150));
+            // stop-ideas: a fixed list per kind
+            if (name === 'stop-ideas') {
+              if (b.kind === 'you') return { data: { ideas: [{ title: 'Puerto Natales market', note: 'Busiest on Saturday mornings', len: '1 h', because: (b.prefs || [])[0] || null },
+                { title: 'Grey Glacier boat', note: 'Already on the list', len: 'Half day', because: null }, { title: 'Sea kayak in the fjord', note: 'Book a day ahead', len: '3 h', because: 'outdoor adventure' }] }, error: null };
+              return { data: { ideas: [{ title: 'Mirador Dorotea hike', note: 'Taxi to the start', len: '4 h' }, { title: 'Costanera walk', note: 'Best at sunset', len: '1 h' }] }, error: null };
+            }
             if (localStorage.getItem('fake:draft') === 'fail') return { data: null, error: { message: 'Edge Function returned a non-2xx status code', context: { json: async () => ({ error: 'The AI couldn\'t make a draft just now. Try again in a minute.' }) } } };
             const st = (place, country, nights, why, next) => ({ place, country, nights, why, next });
             if (b.tweak && b.tweak.text === 'make it short') return { data: { model: 'fake', draft: { routes: [{ name: b.tweak.route.name, pitch: 'Short.', highlights: [],
