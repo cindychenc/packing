@@ -18,6 +18,9 @@ create table if not exists public.stop_ideas (
 );
 create index if not exists stop_ideas_trip on public.stop_ideas (trip_id, place, sort);
 
+-- the app's signed-in role needs table access too (as in 001); RLS below still limits it to the trip's members
+grant select, insert, update, delete on public.stop_ideas to authenticated;
+
 alter table public.stop_ideas enable row level security;
 drop policy if exists "members read" on public.stop_ideas;
 drop policy if exists "editors write" on public.stop_ideas;
