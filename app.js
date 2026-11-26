@@ -805,16 +805,17 @@
 
   /* ───────────── trip page ───────────── */
   async function loadTrip(id) {
-    const [t, d, p] = await Promise.all([
+    const [t, d, p, pl] = await Promise.all([
       sb.from('trips').select('*').eq('id', id).maybeSingle(),
       sb.from('days').select('*').eq('trip_id', id).order('idx', { ascending: true }),
-      sb.from('phases').select('*').eq('trip_id', id).order('sort', { ascending: true })
+      sb.from('phases').select('*').eq('trip_id', id).order('sort', { ascending: true }),
+      sb.from('places').select('name,lat,lng').eq('trip_id', id)
     ]);
     const err = t.error || d.error || p.error;
     if (err) throw err;
     if (!t.data) return null;
     datesFor(t.data, d.data);
-    return { trip: t.data, days: d.data, phases: p.data };
+    return { trip: t.data, days: d.data, phases: p.data, places: pl.error ? [] : (pl.data || []) };
   }
   // Each day's date (only on the client): the trip's start date + its position. None while the trip has no dates.
   function datesFor(trip, days) {
@@ -1093,13 +1094,14 @@
     return res;
   }
 
-  /* ───────────── Planner: phase timeline + phase cards ("Shape the trip", canvas row 2) ─────────────
-     The timeline is the phase list (click = pick). The picked phase is a card with its stops and days;
-     the phases before and after peek in at the sides. Stops are runs of days with the same place (layout.js). */
+  /* ───────────── Planner: phase tabs + the picked phase's card + its map ("5b" on the canvas) ─────────────
+     The tabs are the phase list (click = pick), each as wide as its phase is long. The picked phase is a card
+     with its stops and days; a map of its stops sits on the right. Stops are runs of days with the same place (layout.js). */
   const PLACES = window.SuitcasePlaces;
   let curPhase = 0;          // index of the phase card in focus
   let lastPhase = 0;         // for the slide-in direction
   let addingPhase = false;   // the blank "Add a phase" card is in focus
+  let nightsOpen = null;     // the stop whose nights are being changed: phaseId + ':' + its first day
   const draft = { text: '', pick: null, nights: 2 };   // the "Add next stop" / first stop input
   const resetDraft = () => { draft.text = ''; draft.pick = null; draft.nights = 2; };
 
@@ -1120,42 +1122,29 @@
     const pick = i => { lastPhase = curPhase; curPhase = i; addingPhase = false; openMenu = null; renderTrip('planner'); };
 
     /* timeline */
-    const tl = h('div', { class: 'tl', role: 'list' },
+    const tl = h('div', { class: 'tl', role: 'tablist', 'aria-label': 'Phases' },
       L.phases.map((p, i) => {
-        const st = LAYOUT.startIdx(L, i);
-        return h('button', { class: 'tl-ph' + (i === curPhase && !blankOn ? ' on' : ''), role: 'listitem', style: { flex: p.days.length, background: p.colour || '#888' },
-          title: LAYOUT.nameOf(L, i) + ' · ' + span(st, st + p.days.length - 1), 'aria-current': i === curPhase && !blankOn ? 'true' : null, onclick: () => pick(i) },
+        const st = LAYOUT.startIdx(L, i), on = i === curPhase && !blankOn;
+        return h('button', { class: 'tl-ph' + (on ? ' on' : ''), role: 'tab', style: { flex: p.days.length, borderTopColor: p.colour || '#888' },
+          title: LAYOUT.nameOf(L, i) + ' · ' + span(st, st + p.days.length - 1), 'aria-selected': String(on), onclick: () => pick(i) },
           h('b', null, LAYOUT.nameOf(L, i)), h('span', null, plural(p.days.length, 'day')));
       }),
-      L.free.length ? h('button', { class: 'tl-free' + (blankOn ? ' on' : ''), role: 'listitem', style: { flex: L.free.length },
+      L.free.length ? h('button', { class: 'tl-free' + (blankOn ? ' on' : ''), role: 'tab', 'aria-selected': String(blankOn), style: { flex: L.free.length },
         onclick: () => { if (!n) return; lastPhase = curPhase; curPhase = n - 1; addingPhase = true; renderTrip('planner'); } },
         plural(L.free.length, 'day') + ' to plan') : null);
 
     /* cards */
-    let main, left = null, right = null;
-    if (blankOn) {
-      main = startCard(L, fmt);
-      if (n) left = phaseCard(L, n - 1, fmt, false);
-    } else {
-      main = phaseCard(L, curPhase, fmt, true);
-      if (curPhase > 0) left = phaseCard(L, curPhase - 1, fmt, false);
-      if (curPhase < n - 1) right = phaseCard(L, curPhase + 1, fmt, false);
-      else if (L.free.length) right = h('div', { class: 'pcard blank' }, h('div', { class: 'blank-in' },
-        h('strong', null, '+ Add a phase'), h('span', { class: 'muted' }, plural(L.free.length, 'day') + ' left to plan')));
-    }
+    const main = blankOn ? startCard(L, fmt) : phaseCard(L, curPhase, fmt, true);
     const focusIdx = blankOn ? n : curPhase;
     const dir = focusIdx > lastPhase ? ' from-r' : focusIdx < lastPhase ? ' from-l' : '';
     lastPhase = focusIdx;
-    const tilt = k => ({ '--tilt': (k % 2 ? 1.5 : -1.5) + 'deg' });
-    const stage = h('div', { class: 'stage' },
-      left ? h('div', { class: 'peek l' + dir, style: tilt(focusIdx - 1), onclick: () => pick(blankOn ? n - 1 : curPhase - 1), title: 'Open this phase' }, left) : null,
-      h('div', { class: 'focus' + dir }, main),
-      right ? h('div', { class: 'peek r' + dir, style: tilt(focusIdx + 1), title: right.classList.contains('blank') ? 'Add a phase' : 'Open this phase',
-        onclick: () => { if (right.classList.contains('blank')) { resetDraft(); addingPhase = true; renderTrip('planner'); } else pick(curPhase + 1); } }, right) : null);
+    const stage = h('div', { class: 'stage' }, h('div', { class: 'focus' + dir }, main));
 
     return h('section', { class: 'planner' },
-      h('div', { class: 'planner-top' }, tl, h('div', { class: 'planner-meta' }, saveState)),
-      stage);
+      h('div', { class: 'planner-meta' }, saveState),
+      h('div', { class: 'pl-grid' },
+        h('div', { class: 'pl-main' }, tl, stage),
+        phaseMap(blankOn ? null : L.phases[curPhase], blankOn ? [] : LAYOUT.stopsOf(L.phases[curPhase]).filter(s => s.place))));
   }
 
   /* A phase card. live = the one in focus (editable); the side cards are read-only previews. */
@@ -1173,16 +1162,25 @@
       h('span', { class: 'pc-meta' }, span3(fmt, st, p.days.length) + (nStops ? ' · ' + plural(nStops, 'stop') : '')),
       live ? phaseMenu(L, i, p) : null);
     const flow = h('div', { class: 'flow' });
+    // the stop before this phase, so its first stop can show how you get there
     let prev = null;
+    for (let k = i - 1; k >= 0 && !prev; k--) { const ss = LAYOUT.stopsOf(L.phases[k]).filter(x => x.place); if (ss.length) prev = ss[ss.length - 1].place; }
     stops.forEach(s => {
+      let leg = null;
       if (s.place) {
-        if (prev) flow.append(h('div', { class: 'f-leg' }, h('span', { class: 'f-ico' }, svg(LEG)), h('span', { class: 'muted' }, prev + ' → ' + s.place)));
+        if (prev && prev !== s.place) leg = { from: prev, to: s.place };
         prev = s.place;
-        flow.append(h('div', { class: 'f-stop' }, h('span', { class: 'f-ico' }, svg(PIN(p.colour))),
-          h('strong', { class: 'f-place' }, s.place), h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1)),
-          live ? nights(s.n, v => tryLayout(LAYOUT.setStopNights(currentLayout(), i, s.start, v)), s.place) : h('span', { class: 'muted' }, plural(s.n, 'night'))));
+        const key = p.id + ':' + s.start, editing = live && nightsOpen === key;
+        const n2 = !live ? h('span', { class: 'muted' }, plural(s.n, 'night'))
+          : editing ? h('span', { class: 'n-edit' }, nights(s.n, v => tryLayout(LAYOUT.setStopNights(currentLayout(), i, s.start, v)), s.place),
+              h('button', { class: 'btn small primary n-done', onclick: () => { nightsOpen = null; renderTrip('planner'); } }, 'Done'))
+          : h('button', { class: 'n-btn', title: 'Change nights', 'aria-label': 'Change nights in ' + s.place + ' (' + plural(s.n, 'night') + ')',
+              onclick: () => { nightsOpen = key; renderTrip('planner'); } }, plural(s.n, 'night'));
+        flow.append(h('div', { class: 'f-stop' },
+          h('span', { class: 'f-lbl-w' }, h('span', { class: 'f-lbl', style: { background: p.colour || '#888' } }, s.place),
+            h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1))), n2));
       }
-      for (let j = s.start; j < s.start + s.n; j++) flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place));
+      for (let j = s.start; j < s.start + s.n; j++) flow.append(flowDay(L, i, j, st + j, fmt, live, !s.place, j === s.start ? leg : null));
     });
     if (live) flow.append(stopRow({ placeholder: 'Add next stop', ghostFrom: st + p.days.length, fmt, lastPhase: i === L.phases.length - 1,
       onAdd: (place, pk, nn) => addStopTo(i, place, pk, nn) }));
@@ -1190,8 +1188,69 @@
   }
   const span3 = (fmt, st, len) => fmt.span(st, st + len - 1) + ' · ' + plural(len, 'day');
 
+  const legMode = t => /\b(fly|flight|plane)\b/i.test(t || '') ? 'fly' : /\btrain\b/i.test(t || '') ? 'train' : /\b(bus|coach)\b/i.test(t || '') ? 'bus'
+    : /\b(drive|car)\b/i.test(t || '') ? 'drive' : /\b(ferry|boat)\b/i.test(t || '') ? 'boat' : 'any';
+  const LI = d => '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
+  const LEG_ICON = { fly: LI('M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'),
+    bus: LI('M8 6v6M15 6v6M2 12h19.6M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2s-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3M9 18h5M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0'),
+    train: LI('M8 3h8a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3zM5 11h14M8 21l2-3M16 21l-2-3M9 15h.01M15 15h.01'),
+    drive: LI('M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M12 14v7M10 12L3.3 10M14 12l6.7-2'),
+    boat: LI('M2 18h20a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4zM21 14L10 2 3 14h18zM10 2v16'),
+    any: LI('M5 12h14M13 6l6 6-6 6') };
+
+  /* Map of the picked phase's stops, right of the card. One Mapbox GL map, kept across renders and redrawn
+     when the stops change; a still image without GL (no WebGL, or the tests). */
+  const pmap = { el: null, gl: null, key: null, still: false };
+  function phaseMap(p, stops) {
+    if (!p) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, 'Add a stop to see it on the map.'));
+    const at = {}; (tripData.places || []).forEach(x => { if (x.lat != null) at[x.name] = x; });
+    const pts = []; stops.forEach(s => { const x = at[s.place]; if (x && !(pts.length && pts[pts.length - 1].place === s.place)) pts.push({ place: s.place, lat: x.lat, lng: x.lng }); });
+    if (!pts.length) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, stops.length ? 'These stops aren’t on the map yet.' : 'Add a stop to see it on the map.'));
+    const tag = h('span', { class: 'pmap-tag' }, LAYOUT.nameOf(currentLayout(), curPhase) + ' · ' + plural(stops.length, 'stop'));
+    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>');
+    if (!pmap.el) pmap.el = h('div', { class: 'pmap-in', role: 'img' });
+    pmap.el.setAttribute('aria-label', 'Map of the stops in this phase: ' + pts.map(x => x.place).join(', '));
+    const box = h('div', { class: 'pmap' }, pmap.el, tag);
+    if (pmap.key === key) { if (pmap.gl) setTimeout(() => pmap.gl.resize(), 0); return box; }
+    pmap.key = key;
+    const colour = p.colour || '#3F5675';
+    const still = () => { const url = PLACES.staticMap(pts.map(x => Object.assign({ colour }, x)), 380, 560, { curve: true });
+      pmap.el.replaceChildren(url ? h('img', { class: 'pmap-img', src: url, alt: '' }) : ''); };
+    const data = () => {
+      const legs = pts.slice(1).map((x, k) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: PLACES.curved([pts[k], x]).map(c => [c[1], c[0]]) } }));
+      const pins = pts.map((x, k) => ({ type: 'Feature', properties: { n: String(k + 1), name: x.place }, geometry: { type: 'Point', coordinates: [x.lng, x.lat] } }));
+      return { legs: { type: 'FeatureCollection', features: legs }, pins: { type: 'FeatureCollection', features: pins } };
+    };
+    const bounds = () => { let a = [180, 90], b = [-180, -90]; pts.forEach(x => { a = [Math.min(a[0], x.lng), Math.min(a[1], x.lat)]; b = [Math.max(b[0], x.lng), Math.max(b[1], x.lat)]; });
+      if (a[0] === b[0] && a[1] === b[1]) { a = [a[0] - 1, a[1] - 1]; b = [b[0] + 1, b[1] + 1]; } return [a, b]; };
+    if (pmap.still) { still(); return box; }
+    loadGL().then(mb => {
+      const paint = m => { const d = data(); m.getSource('legs').setData(d.legs); m.getSource('pins').setData(d.pins);
+        m.setPaintProperty('legs', 'line-color', colour); m.setPaintProperty('pins', 'circle-color', colour);
+        m.fitBounds(bounds(), { padding: 50, maxZoom: 9, duration: pmap.drawn ? 500 : 0 }); pmap.drawn = true; };
+      if (pmap.gl) { if (pmap.gl.loaded()) paint(pmap.gl); else pmap.gl.once('load', () => paint(pmap.gl)); setTimeout(() => pmap.gl.resize(), 0); return; }
+      mb.accessToken = CFG.mapboxToken;
+      const m = pmap.gl = new mb.Map({ container: pmap.el, style: 'mapbox://styles/mapbox/light-v11', bounds: bounds(), fitBoundsOptions: { padding: 50, maxZoom: 9 },
+        dragRotate: false, pitchWithRotate: false, cooperativeGestures: true, attributionControl: false });
+      m.addControl(new mb.NavigationControl({ showCompass: false }), 'top-right');
+      m.addControl(new mb.AttributionControl({ compact: true }), 'bottom-right');
+      if (window.ResizeObserver) new ResizeObserver(() => m.resize()).observe(pmap.el);
+      m.on('load', () => {
+        const d = data();
+        m.addSource('legs', { type: 'geojson', data: d.legs }); m.addSource('pins', { type: 'geojson', data: d.pins });
+        m.addLayer({ id: 'legs', type: 'line', source: 'legs', paint: { 'line-color': colour, 'line-width': 2.5 }, layout: { 'line-cap': 'round' } });
+        m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': 10, 'circle-color': colour, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+        m.addLayer({ id: 'nums', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'n'], 'text-size': 11, 'text-allow-overlap': true }, paint: { 'text-color': '#fff' } });
+        m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 12, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-optional': true },
+          paint: { 'text-color': '#222', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
+        pmap.drawn = true; m.resize();
+      });
+    }).catch(e => { pmap.still = true; if (!/fake/.test(e.message || '')) console.warn('map', e); still(); });
+    return box;
+  }
+
   const AUTO_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.9zM19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>';
-  function flowDay(L, i, j, idx, fmt, live, free) {
+  function flowDay(L, i, j, idx, fmt, live, free, leg) {
     const d = L.phases[i].days[j], row = tripData.days.find(x => x.id === d.id), date = fmt.dateAt(idx);
     const box = h('span', { class: 'f-day' }, date ? [h('span', null, wd(date).toUpperCase()), h('strong', null, pd(date).getUTCDate())] : [h('span', null, 'DAY'), h('strong', null, idx + 1)]);
     const rm = live ? h('button', { class: 'dx', 'aria-label': 'Remove ' + fmt.shortDay(idx), title: 'Remove this day', onclick: () => tryLayout(LAYOUT.removeDay(currentLayout(), i, j)) }, '×') : null;
@@ -1205,7 +1264,10 @@
     // a plan Suitcase filled in from the route shows a small mark until someone edits it
     const auto = !!(row && row.plan_auto && d.plan);
     const mark = auto ? h('span', { class: 'f-auto', title: 'Filled in from your route · edit it to make it yours', 'aria-label': 'Filled in from your route', role: 'img' }, svg(AUTO_ICON)) : null;
-    if (!live) return h('div', { class: 'f-row' }, box, h('span', { class: 'f-plan' + (d.plan ? '' : ' muted') }, d.plan || 'No plan yet', mark));
+    // the transfer shows on the day it happens: the first day at a new stop. Its mode is read from that day's plan, if it says.
+    const xfer = leg ? h('span', { class: 'f-xfer' }, svg(LEG_ICON[legMode(d.plan)]), leg.from + ' → ' + leg.to) : null;
+    const rowCls = 'f-row' + (xfer ? ' hasx' : '');
+    if (!live) return h('div', { class: rowCls }, box, h('span', { class: 'f-col' }, h('span', { class: 'f-plan' + (d.plan ? '' : ' muted') }, d.plan || 'No plan yet', mark), xfer));
     const plan = h('input', { class: 'f-in', value: d.plan || '', placeholder: 'Add a plan', 'aria-label': 'Plan for ' + fmt.shortDay(idx) });
     plan.addEventListener('input', () => {
       if (!row) return; const v = plan.value.trim() || null; row.plan = v;
@@ -1214,7 +1276,8 @@
       clearTimeout(row._tplan); row._tplan = setTimeout(() => saveDayField(row.id, patch), 500);
     });
     plan.addEventListener('keydown', e => { if (e.key === 'Enter') plan.blur(); });
-    return h('div', { class: 'f-row' }, box, mark ? h('span', { class: 'f-pw' }, plan, mark) : plan, rm);
+    const field = mark ? h('span', { class: 'f-pw' }, plan, mark) : plan;
+    return h('div', { class: rowCls }, box, xfer ? h('span', { class: 'f-col' }, field, xfer) : field, rm);
   }
 
   // – N nights +
@@ -1341,6 +1404,8 @@
   // Keep where each place is (for the map later). Same name on the same trip = same place.
   function rememberPlace(pk) {
     if (!pk || !tripData) return;
+    const list = tripData.places || (tripData.places = []);   // the phase map reads these
+    if (pk.lat != null && !list.some(x => x.name === pk.name)) list.push({ name: pk.name, lat: pk.lat, lng: pk.lng });
     sb.from('places').upsert({ trip_id: tripData.trip.id, name: pk.name, lat: pk.lat, lng: pk.lng, country: pk.country, found_as: pk.label || null },
       { onConflict: 'trip_id,name' }).then(r => { if (r && r.error) console.warn('place not saved', r.error.message); });
   }
