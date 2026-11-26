@@ -674,3 +674,9 @@ table.itin.grouped thead th { position: static; }
 .pmk-i.here { background: #6B5BD6; color: #fff; }
 .pmk-i.else { background: #D9D4F5; }
 .pmk-i.on { box-shadow: 0 0 0 4px rgba(107,91,214,.3); }   /* not transform: Mapbox positions markers with it */
+
+/* Map icons: how a leg is travelled, what's done at a stop, and the dotted loop of a day hike */
+.mdeco { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #fff; color: #222; box-shadow: 0 1px 3px rgba(0,0,0,.25); pointer-events: none; }
+.mdeco-loop { pointer-events: none; width: 120px; height: 120px; }
+.mdeco-loop svg { display: block; }
+.zoomed .mdeco.act, .zoomed .mdeco-loop { display: none; }

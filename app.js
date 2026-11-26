@@ -248,7 +248,7 @@
 
   // Icons for highlight types (the KINDS list in supabase/functions/draft-trip/prompt.ts). 24×24, stroked.
   const HL_ICONS = {
-    hike: 'M3 19l6-10 4 6 2-3 6 7H3zM8 11l1.5 1.5L11 11', mountain: 'M2 20l7-12 4 6 3-4 6 10z', volcano: 'M4 19l5-8h6l5 8zM10 11l.8-3M14 11l-.8-3M12 3.5v2M9 5l1 1.2M15 5l-1 1.2',
+    hike: 'M3 19l6-10 4 6 2-3 6 7H3zM8 11l1.5 1.5L11 11', kayak: 'M4 20L20 4M3 21l2-2M19 5l2-2M7 13c1.5 1.5 2.5 2.5 4 4M13 7c1.5 1.5 2.5 2.5 4 4', bike: 'M6 17m-3.5 0a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M18 17m-3.5 0a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0M6 17l4-8h5l3 8M9 6h3M12 9l-2 8', mountain: 'M2 20l7-12 4 6 3-4 6 10z', volcano: 'M4 19l5-8h6l5 8zM10 11l.8-3M14 11l-.8-3M12 3.5v2M9 5l1 1.2M15 5l-1 1.2',
     glacier: 'M3 18l5-8 3 4 3-6 7 10zM9 12l1.5 1.5M14.5 9.5L16 12', valley: 'M2 19l5-11 3 6 2-8 3 8 2-4 5 9zM2 19h20',
     lake: 'M3 15c2 0 2-1.5 4.5-1.5S10 15 12 15s2-1.5 4.5-1.5S19 15 21 15M3 19c2 0 2-1.5 4.5-1.5S10 19 12 19s2-1.5 4.5-1.5S19 19 21 19M8 10l4-6 4 6',
     beach: 'M4 20h16M7 20c0-5 2-9 5-11M12 9c-2-3-6-3-8-1 3 0 5 .5 8 1zm0 0c2-3 6-3 8-1-3 0-5 .5-8 1z', island: 'M3 18c3-2 15-2 18 0M12 16V8M12 8c-2-2-5-2-6 0M12 8c2-2 5-2 6 0',
@@ -534,7 +534,8 @@
           r.phases.forEach((p, pi) => (p.stops || []).forEach(s => {
             const f = at[s.place + '|' + (s.country || '')] || {};
             const lp = L.phases[pi] || L.phases[L.phases.length - 1];
-            stops.push({ place: s.place, n: s.nights, why: s.why, next: s.next || null, colour: lp ? lp.colour : '#3F5675', phase: lp ? lp.id : null,
+            const hl = (r.highlights || []).concat(st.draft.shared || []).filter(x => x && !x.skip && String(x.place || '').toLowerCase() === s.place.toLowerCase()).map(x => x.text);
+            stops.push({ place: s.place, n: s.nights, why: s.why, next: s.next || null, colour: lp ? lp.colour : '#3F5675', phase: lp ? lp.id : null, acts: actsOf((s.plans || []).concat(hl)),
               lat: f.lat, lng: f.lng, country: f.country || s.country, label: f.label });
           }));
           return { r, layout: L, stops, left: fit.left, tweak: null, ideas: cp.ideas };
@@ -618,7 +619,7 @@
         loadGL().then(mb => {
           if (!el.isConnected) { x.mapEl = null; return; }   // moved on before the map code arrived
           mb.accessToken = CFG.mapboxToken;
-          const m = x.gl = new mb.Map({ container: el, style: 'mapbox://styles/mapbox/light-v11', bounds: boundsOf(pts), fitBoundsOptions: { padding: 30, maxZoom: 9 },
+          const m = x.gl = new mb.Map({ container: el, style: 'mapbox://styles/mapbox/light-v11', bounds: boundsOf(pts), fitBoundsOptions: { padding: 50, maxZoom: 9 },
             dragRotate: false, pitchWithRotate: false, cooperativeGestures: true, attributionControl: false });
           // The pop-up grows to full width as step 3 opens, so the map is made while its cell is still narrow:
           // follow the cell's size, or the map stays drawn at that first width.
@@ -630,10 +631,11 @@
             legs.push({ type: 'Feature', properties: { mode: s.next || '' }, geometry: { type: 'LineString', coordinates: PLACES.curved([s, t]).map(p => [p[1], p[0]]) } }); });
           const pins = pts.map((s, i) => ({ type: 'Feature', properties: { c: s.colour, end: i === 0 || i === pts.length - 1, name: s.place }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
           m.on('load', () => {
-            m.resize(); m.fitBounds(boundsOf(pts), { padding: 30, maxZoom: 9, duration: 0 });
+            m.resize(); m.fitBounds(boundsOf(pts), { padding: 50, maxZoom: 9, duration: 0 });
             m.addSource('legs', { type: 'geojson', data: { type: 'FeatureCollection', features: legs } });
             m.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: pins } });
             addLegLayers(m, 'legs', 'legs', '#3F5675', 2.5);
+            mapDeco(mb, m, legs.map(f => ({ coords: f.geometry.coordinates, mode: f.properties.mode })), pts.map(s => ({ lng: s.lng, lat: s.lat, acts: s.acts })), '#3F5675', true);
             m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': ['case', ['get', 'end'], 6, 4.5], 'circle-color': ['get', 'c'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
             m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
               paint: { 'text-color': '#222', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
@@ -1206,6 +1208,49 @@
     m.addLayer({ id: id + '-hike', type: 'line', source: src, filter: ['all', isLine, ['==', mode, 'hike']], paint: { 'line-color': colour, 'line-width': w * 1.2, 'line-dasharray': [0, 2] }, layout: { 'line-cap': 'round' } });   // zero dashes with round caps draw dots
   }
   const setLegColour = (m, id, c) => ['', '-fly', '-hike'].forEach(x => m.setPaintProperty(id + x, 'line-color', c));
+
+  /* What a stop's days are for, as map icons: a day hike there (out and back to the same place) is drawn as a small
+     dotted loop off its pin, the other activities as icons beside it. Read from the day lines; travel lines don't count. */
+  const ACTS = [['hike', /\b(hikes?|hiking|treks?|trail|walk|summit|circuit|laguna|mirador)\b/i], ['kayak', /\b(kayak|paddl|canoe|raft)/i], ['glacier', /\bglaciers?\b/i],
+    ['boat', /\b(boat|cruise|sail)/i], ['hot_springs', /hot springs?|thermal|termas/i], ['wildlife', /\b(penguins?|wildlife|whales?|condors?|birds?)\b/i], ['bike', /\b(bikes?|cycl)/i], ['wine', /\b(wine|vineyards?|winery)\b/i]];
+  function actsOf(lines) {
+    const out = [];
+    (lines || []).forEach(t => String(t || '').split(' · ').forEach(x => { if (!x || /^(hike from|arrive|fly|bus|drive|train|boat from|ferry from|travel|last night)\b/i.test(x.trim())) return;
+      const a = ACTS.find(([, re]) => re.test(x)); if (a && !out.includes(a[0])) out.push(a[0]); }));
+    return out;
+  }
+  // Icons beside a map's legs (how you travel) and stops (what you do there), as markers so they keep their size when zooming.
+  // legs: [{ coords: [[lng, lat]…], mode }]; stops: [{ lng, lat, acts }]. Returns the markers, to remove on the next draw.
+  function mapDeco(mb, m, legs, stops, colour, small) {
+    const merc = c => [c[0], -Math.log(Math.tan(Math.PI / 4 + c[1] * Math.PI / 360)) * 180 / Math.PI];
+    const unit = (a, b) => { const p = merc(a), q = merc(b), dx = q[0] - p[0], dy = q[1] - p[1], l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l]; };
+    const out = [], add = (el, at, off) => out.push(new mb.Marker({ element: el, offset: off }).setLngLat(at).addTo(m));
+    const icon = (path, cls, label) => { const el = h('span', { class: 'mdeco ' + cls, title: label, 'aria-hidden': 'true' }); el.innerHTML = '<svg viewBox="0 0 24 24" width="' + (small ? 13 : 15) + '" height="' + (small ? 13 : 15) + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>'; return el; };
+    const MODE_PATH = { fly: HL_ICONS.flight, bus: 'M5 17V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11M5 12h14M5 17h14M7 20v-3M17 20v-3M8 9h8', train: HL_ICONS.train, drive: HL_ICONS.drive, boat: HL_ICONS.boat, hike: HL_ICONS.hike };
+    const NAME = { fly: 'Flight', bus: 'Bus', train: 'Train', drive: 'Drive', boat: 'Boat', hike: 'Hike' };
+    legs.forEach(g => {
+      const path = MODE_PATH[g.mode]; if (!path || g.coords.length < 3) return;
+      const k = Math.floor(g.coords.length / 2), d = unit(g.coords[k - 1], g.coords[k + 1]), o = small ? 11 : 15;
+      add(icon(path, 'leg', NAME[g.mode]), g.coords[k], [Math.round(-d[1] * o), Math.round(d[0] * o)]);
+    });
+    stops.forEach((s, i) => {
+      if (!s.acts || !s.acts.length) return;
+      // point away from the legs at this stop (up when there are none)
+      let vx = 0, vy = 0; [stops[i - 1], stops[i + 1]].forEach(t => { if (t && (t.lng !== s.lng || t.lat !== s.lat)) { const d = unit([s.lng, s.lat], [t.lng, t.lat]); vx += d[0]; vy += d[1]; } });
+      const th = vx || vy ? Math.atan2(-vy, -vx) : -Math.PI / 2, deg = th * 180 / Math.PI + 90, R = small ? 26 : 50;
+      if (s.acts.includes('hike')) {
+        const el = h('span', { class: 'mdeco-loop act', 'aria-hidden': 'true' });
+        el.innerHTML = '<svg viewBox="-60 -60 120 120" width="120" height="120"><path transform="rotate(' + deg.toFixed(1) + ')" d="M-3 -9C-22 -' + Math.round(R * .45) + ' -13 -' + R + ' 0 -' + R + 'C13 -' + R + ' 22 -' + Math.round(R * .45) + ' 3 -9" fill="none" stroke="' + colour + '" stroke-width="' + (small ? 2.5 : 3) + '" stroke-linecap="round" stroke-dasharray="0 ' + (small ? 4.5 : 5.5) + '"/></svg>';
+        add(el, [s.lng, s.lat], [0, 0]);
+        add(icon(HL_ICONS.hike, 'act', 'Day hikes'), [s.lng, s.lat], [Math.round(Math.cos(th) * (R + 9)), Math.round(Math.sin(th) * (R + 9))]);
+      }
+      s.acts.filter(a => a !== 'hike').slice(0, 2).forEach((a, j) => {
+        const t = th + (j ? -1 : 1) * 0.9, r2 = R - 6;
+        add(icon(HL_ICONS[a] || HL_ICONS.other, 'act', a.replace('_', ' ')), [s.lng, s.lat], [Math.round(Math.cos(t) * r2), Math.round(Math.sin(t) * r2)]);
+      });
+    });
+    return out;
+  }
   const LI = d => '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
   const LEG_ICON = { fly: LI('M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'),
     bus: LI('M8 6v6M15 6v6M2 12h19.6M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2s-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3M9 18h5M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0'),
@@ -1252,16 +1297,18 @@
   /* Map of the picked phase's stops, right of the card, with the rest of the trip as muted lines. One Mapbox GL map,
      kept across renders and redrawn when the stops change; a still image without GL (no WebGL, or the tests).
      Selecting a day zooms to its stop and shows the stop's ideas: lettered markers around it and a card to add them. */
-  const pmap = { el: null, gl: null, mb: null, key: null, still: false, marks: [], bounds: null, zoomed: false, card: null, tag: null };
+  const pmap = { el: null, gl: null, mb: null, key: null, still: false, marks: [], deco: [], bounds: null, zoomed: false, card: null, tag: null };
   function phaseMap(p, stops) {
     if (!p) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, 'Add a stop to see it on the map.'));
     const at = placeAt(), L = currentLayout();
     // each point carries how you get there, read from its stop's first day ("Fly from …", "Hike from …")
     const pts = []; stops.forEach(s => { const x = at[s.place]; if (x && !(pts.length && pts[pts.length - 1].place === s.place)) pts.push({ place: s.place, lat: x.lat, lng: x.lng, mode: legMode(p.days[s.start] && p.days[s.start].plan) }); });
+    // what's done at each place this phase, for the map's activity icons (a day hike draws a loop)
+    pts.forEach(x => { const lines = []; stops.forEach(s => { if (s.place === x.place) for (let j = s.start; j < s.start + s.n; j++) lines.push(p.days[j].plan); }); x.acts = actsOf(lines); });
     if (!pts.length) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, stops.length ? 'These stops aren’t on the map yet.' : 'Add a stop to see it on the map.'));
     // the whole trip in order, to draw the other phases (and the legs into and out of this one) muted
     const all = []; L.phases.forEach((q, i) => LAYOUT.stopsOf(q).forEach(s => { const x = at[s.place]; if (x && !(all.length && all[all.length - 1].place === s.place)) all.push({ i, place: s.place, lat: x.lat, lng: x.lng, mode: legMode(q.days[s.start] && q.days[s.start].plan) }); }));
-    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>') + '|' + all.map(x => x.i + x.place + x.mode).join('>');
+    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>') + '|' + all.map(x => x.i + x.place + x.mode).join('>') + '|' + pts.map(x => x.acts.join(',')).join('>');
     if (!pmap.el) {
       pmap.el = h('div', { class: 'pmap-in', role: 'img' });
       pmap.tag = h('span', { class: 'pmap-tag' });
@@ -1293,11 +1340,13 @@
       const paint = m => { const d = data(); m.getSource('legs').setData(d.legs); m.getSource('pins').setData(d.pins); m.getSource('other').setData(d.other);
         setLegColour(m, 'legs', colour); m.setPaintProperty('pins', 'circle-color', colour);
         m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
-        if (!selInfo()) m.fitBounds(pmap.bounds, { padding: 50, maxZoom: 9, duration: pmap.drawn ? 500 : 0 });
-        pmap.drawn = true; paintSel(); };
+        if (!selInfo()) m.fitBounds(pmap.bounds, { padding: 75, maxZoom: 9, duration: pmap.drawn ? 500 : 0 });
+        deco(m); pmap.drawn = true; paintSel(); };
+      const deco = m => { pmap.deco.forEach(x => x.remove()); const d = data();
+        pmap.deco = mapDeco(mb, m, d.legs.features.map((f, k) => ({ coords: f.geometry.coordinates, mode: pts[k + 1].mode })), pts, colour); };
       if (pmap.gl) { if (pmap.gl.loaded()) paint(pmap.gl); else pmap.gl.once('load', () => paint(pmap.gl)); setTimeout(() => pmap.gl.resize(), 0); return; }
       mb.accessToken = CFG.mapboxToken;
-      const m = pmap.gl = new mb.Map({ container: pmap.el, style: 'mapbox://styles/mapbox/light-v11', bounds: pmap.bounds, fitBoundsOptions: { padding: 50, maxZoom: 9 },
+      const m = pmap.gl = new mb.Map({ container: pmap.el, style: 'mapbox://styles/mapbox/light-v11', bounds: pmap.bounds, fitBoundsOptions: { padding: 75, maxZoom: 9 },
         dragRotate: false, pitchWithRotate: false, cooperativeGestures: true, attributionControl: false });
       m.addControl(new mb.NavigationControl({ showCompass: false }), 'top-right');
       m.addControl(new mb.AttributionControl({ compact: true }), 'bottom-right');
@@ -1312,7 +1361,7 @@
         m.addLayer({ id: 'nums', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'n'], 'text-size': 11, 'text-allow-overlap': true }, paint: { 'text-color': '#fff' } });
         m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 12, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-optional': true },
           paint: { 'text-color': '#222', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
-        pmap.drawn = true; m.resize(); paintSel();
+        deco(m); pmap.drawn = true; m.resize(); paintSel();
       });
     }).catch(e => { pmap.still = true; if (!/fake/.test(e.message || '')) console.warn('map', e); still(); });
     return box;
@@ -1360,10 +1409,11 @@
     pmap.marks.forEach(x => x.remove()); pmap.marks = [];
     const pt = S && placeAt()[S.s.place];
     if (!pt) {
-      if (pmap.zoomed) { pmap.zoomed = false; m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }); m.fitBounds(pmap.bounds, { padding: 50, maxZoom: 9, duration: 500 }); }
+      pmap.el.classList.remove('zoomed');
+      if (pmap.zoomed) { pmap.zoomed = false; m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }); m.fitBounds(pmap.bounds, { padding: 75, maxZoom: 9, duration: 500 }); }
       return;
     }
-    pmap.zoomed = true;
+    pmap.zoomed = true; pmap.el.classList.toggle('zoomed', rows.length > 0);
     // the stop sits in the top part of the map, above the ideas card
     m.easeTo({ center: [pt.lng, pt.lat], zoom: 10, padding: { top: 0, left: 0, right: 0, bottom: rows.length ? Math.round((pmap.el.clientHeight || 600) * .45) : 0 }, duration: 600 });
     rows.forEach((x, k) => {
