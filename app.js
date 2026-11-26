@@ -627,14 +627,13 @@
           m.addControl(new mb.AttributionControl({ compact: true }), 'bottom-right');
           const legs = [];
           x.stops.forEach((s, i) => { const t = x.stops[i + 1]; if (t && s.lat != null && t.lat != null)
-            legs.push({ type: 'Feature', properties: { fly: s.next === 'fly' }, geometry: { type: 'LineString', coordinates: PLACES.curved([s, t]).map(p => [p[1], p[0]]) } }); });
+            legs.push({ type: 'Feature', properties: { mode: s.next || '' }, geometry: { type: 'LineString', coordinates: PLACES.curved([s, t]).map(p => [p[1], p[0]]) } }); });
           const pins = pts.map((s, i) => ({ type: 'Feature', properties: { c: s.colour, end: i === 0 || i === pts.length - 1, name: s.place }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } }));
           m.on('load', () => {
             m.resize(); m.fitBounds(boundsOf(pts), { padding: 30, maxZoom: 9, duration: 0 });
             m.addSource('legs', { type: 'geojson', data: { type: 'FeatureCollection', features: legs } });
             m.addSource('pins', { type: 'geojson', data: { type: 'FeatureCollection', features: pins } });
-            m.addLayer({ id: 'legs', type: 'line', source: 'legs', filter: ['!', ['get', 'fly']], paint: { 'line-color': '#3F5675', 'line-width': 2.5 }, layout: { 'line-cap': 'round' } });
-            m.addLayer({ id: 'legs-fly', type: 'line', source: 'legs', filter: ['get', 'fly'], paint: { 'line-color': '#3F5675', 'line-width': 2, 'line-dasharray': [2, 2] } });
+            addLegLayers(m, 'legs', 'legs', '#3F5675', 2.5);
             m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': ['case', ['get', 'end'], 6, 4.5], 'circle-color': ['get', 'c'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
             m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
               paint: { 'text-color': '#222', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
@@ -1199,6 +1198,14 @@
 
   const legMode = t => /^hike from\b/i.test(t || '') ? 'hike' : /\b(fly|flight|plane)\b/i.test(t || '') ? 'fly' : /\btrain\b/i.test(t || '') ? 'train' : /\b(bus|coach)\b/i.test(t || '') ? 'bus'
     : /\b(drive|car)\b/i.test(t || '') ? 'drive' : /\b(ferry|boat)\b/i.test(t || '') ? 'boat' : 'any';
+  /* How a leg looks on a map, by how you travel it: roads and the rest solid, flights dashed, hikes dotted. */
+  function addLegLayers(m, id, src, colour, w) {
+    const mode = ['coalesce', ['get', 'mode'], ''], isLine = ['==', ['geometry-type'], 'LineString'];
+    m.addLayer({ id, type: 'line', source: src, filter: ['all', isLine, ['!', ['in', mode, ['literal', ['fly', 'hike']]]]], paint: { 'line-color': colour, 'line-width': w }, layout: { 'line-cap': 'round' } });
+    m.addLayer({ id: id + '-fly', type: 'line', source: src, filter: ['all', isLine, ['==', mode, 'fly']], paint: { 'line-color': colour, 'line-width': w * .8, 'line-dasharray': [2.5, 2] } });
+    m.addLayer({ id: id + '-hike', type: 'line', source: src, filter: ['all', isLine, ['==', mode, 'hike']], paint: { 'line-color': colour, 'line-width': w * 1.2, 'line-dasharray': [0, 2] }, layout: { 'line-cap': 'round' } });   // zero dashes with round caps draw dots
+  }
+  const setLegColour = (m, id, c) => ['', '-fly', '-hike'].forEach(x => m.setPaintProperty(id + x, 'line-color', c));
   const LI = d => '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
   const LEG_ICON = { fly: LI('M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'),
     bus: LI('M8 6v6M15 6v6M2 12h19.6M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2s-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3M9 18h5M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0'),
@@ -1249,11 +1256,12 @@
   function phaseMap(p, stops) {
     if (!p) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, 'Add a stop to see it on the map.'));
     const at = placeAt(), L = currentLayout();
-    const pts = []; stops.forEach(s => { const x = at[s.place]; if (x && !(pts.length && pts[pts.length - 1].place === s.place)) pts.push({ place: s.place, lat: x.lat, lng: x.lng }); });
+    // each point carries how you get there, read from its stop's first day ("Fly from …", "Hike from …")
+    const pts = []; stops.forEach(s => { const x = at[s.place]; if (x && !(pts.length && pts[pts.length - 1].place === s.place)) pts.push({ place: s.place, lat: x.lat, lng: x.lng, mode: legMode(p.days[s.start] && p.days[s.start].plan) }); });
     if (!pts.length) return h('div', { class: 'pmap empty' }, h('span', { class: 'muted' }, stops.length ? 'These stops aren’t on the map yet.' : 'Add a stop to see it on the map.'));
     // the whole trip in order, to draw the other phases (and the legs into and out of this one) muted
-    const all = []; L.phases.forEach((q, i) => LAYOUT.stopsOf(q).forEach(s => { const x = at[s.place]; if (x && !(all.length && all[all.length - 1].place === s.place)) all.push({ i, place: s.place, lat: x.lat, lng: x.lng }); }));
-    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>') + '|' + all.map(x => x.i + x.place).join('>');
+    const all = []; L.phases.forEach((q, i) => LAYOUT.stopsOf(q).forEach(s => { const x = at[s.place]; if (x && !(all.length && all[all.length - 1].place === s.place)) all.push({ i, place: s.place, lat: x.lat, lng: x.lng, mode: legMode(q.days[s.start] && q.days[s.start].plan) }); }));
+    const key = p.id + '|' + p.colour + '|' + pts.map(x => x.place).join('>') + '|' + all.map(x => x.i + x.place + x.mode).join('>');
     if (!pmap.el) {
       pmap.el = h('div', { class: 'pmap-in', role: 'img' });
       pmap.tag = h('span', { class: 'pmap-tag' });
@@ -1271,7 +1279,7 @@
     const colour = p.colour || '#3F5675';
     const still = () => { const url = PLACES.staticMap(pts.map(x => Object.assign({ colour }, x)), 380, 560, { curve: true });
       pmap.el.replaceChildren(url ? h('img', { class: 'pmap-img', src: url, alt: '' }) : ''); };
-    const line = (a, b) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: PLACES.curved([a, b]).map(c => [c[1], c[0]]) } });
+    const line = (a, b) => ({ type: 'Feature', properties: { mode: b.mode }, geometry: { type: 'LineString', coordinates: PLACES.curved([a, b]).map(c => [c[1], c[0]]) } });
     const data = () => ({
       legs: { type: 'FeatureCollection', features: pts.slice(1).map((x, k) => line(pts[k], x)) },
       other: { type: 'FeatureCollection', features: all.slice(1).map((x, k) => (all[k].i === curPhase && x.i === curPhase) || all[k].place === x.place ? null : line(all[k], x)).filter(Boolean)
@@ -1283,7 +1291,7 @@
     loadGL().then(mb => {
       pmap.mb = mb;
       const paint = m => { const d = data(); m.getSource('legs').setData(d.legs); m.getSource('pins').setData(d.pins); m.getSource('other').setData(d.other);
-        m.setPaintProperty('legs', 'line-color', colour); m.setPaintProperty('pins', 'circle-color', colour);
+        setLegColour(m, 'legs', colour); m.setPaintProperty('pins', 'circle-color', colour);
         m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
         if (!selInfo()) m.fitBounds(pmap.bounds, { padding: 50, maxZoom: 9, duration: pmap.drawn ? 500 : 0 });
         pmap.drawn = true; paintSel(); };
@@ -1297,9 +1305,9 @@
       m.on('load', () => {
         const d = data();
         m.addSource('other', { type: 'geojson', data: d.other }); m.addSource('legs', { type: 'geojson', data: d.legs }); m.addSource('pins', { type: 'geojson', data: d.pins });
-        m.addLayer({ id: 'other', type: 'line', source: 'other', filter: ['==', ['geometry-type'], 'LineString'], paint: { 'line-color': '#B9C4CC', 'line-width': 2 }, layout: { 'line-cap': 'round' } });
+        addLegLayers(m, 'other', 'other', '#B9C4CC', 2);
         m.addLayer({ id: 'other-dots', type: 'circle', source: 'other', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 4, 'circle-color': '#B9C4CC' } });
-        m.addLayer({ id: 'legs', type: 'line', source: 'legs', paint: { 'line-color': colour, 'line-width': 2.5 }, layout: { 'line-cap': 'round' } });
+        addLegLayers(m, 'legs', 'legs', colour, 2.5);
         m.addLayer({ id: 'pins', type: 'circle', source: 'pins', paint: { 'circle-radius': 10, 'circle-color': colour, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
         m.addLayer({ id: 'nums', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'n'], 'text-size': 11, 'text-allow-overlap': true }, paint: { 'text-color': '#fff' } });
         m.addLayer({ id: 'names', type: 'symbol', source: 'pins', layout: { 'text-field': ['get', 'name'], 'text-size': 12, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-optional': true },
