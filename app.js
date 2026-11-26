@@ -1225,8 +1225,9 @@
     const merc = c => [c[0], -Math.log(Math.tan(Math.PI / 4 + c[1] * Math.PI / 360)) * 180 / Math.PI];
     const unit = (a, b) => { const p = merc(a), q = merc(b), dx = q[0] - p[0], dy = q[1] - p[1], l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l]; };
     const out = [], add = (el, at, off) => out.push(new mb.Marker({ element: el, offset: off }).setLngLat(at).addTo(m));
-    const icon = (path, cls, label) => { const el = h('span', { class: 'mdeco ' + cls, title: label, 'aria-hidden': 'true' }); el.innerHTML = '<svg viewBox="0 0 24 24" width="' + (small ? 13 : 15) + '" height="' + (small ? 13 : 15) + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>'; return el; };
-    const MODE_PATH = { fly: HL_ICONS.flight, bus: 'M5 17V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11M5 12h14M5 17h14M7 20v-3M17 20v-3M8 9h8', train: HL_ICONS.train, drive: HL_ICONS.drive, boat: HL_ICONS.boat, hike: HL_ICONS.hike };
+    const icon = (path, cls, label) => { const el = h('span', { class: 'mdeco ' + cls, title: label, 'aria-hidden': 'true' }); el.innerHTML = '<svg viewBox="0 0 24 24" width="' + (small ? 15 : 19) + '" height="' + (small ? 15 : 19) + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>'; return el; };
+    const HIKER = 'M14 4.5m-1.6 0a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0M13 8l-2.5 5 3 3v5M10.5 13L8 21M13 8l2.5 3.5 2.5.5M18.5 10L20 21M11 9l-3 1v4';   // a walker with a pole
+    const MODE_PATH = { fly: HL_ICONS.flight, bus: 'M5 17V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11M5 12h14M5 17h14M7 20v-3M17 20v-3M8 9h8', train: HL_ICONS.train, drive: HL_ICONS.drive, boat: HL_ICONS.boat, hike: HIKER };
     const NAME = { fly: 'Flight', bus: 'Bus', train: 'Train', drive: 'Drive', boat: 'Boat', hike: 'Hike' };
     legs.forEach(g => {
       const path = MODE_PATH[g.mode]; if (!path || g.coords.length < 3) return;
@@ -1242,7 +1243,7 @@
         const el = h('span', { class: 'mdeco-loop act', 'aria-hidden': 'true' });
         el.innerHTML = '<svg viewBox="-60 -60 120 120" width="120" height="120"><path transform="rotate(' + deg.toFixed(1) + ')" d="M-3 -9C-22 -' + Math.round(R * .45) + ' -13 -' + R + ' 0 -' + R + 'C13 -' + R + ' 22 -' + Math.round(R * .45) + ' 3 -9" fill="none" stroke="' + colour + '" stroke-width="' + (small ? 2.5 : 3) + '" stroke-linecap="round" stroke-dasharray="0 ' + (small ? 4.5 : 5.5) + '"/></svg>';
         add(el, [s.lng, s.lat], [0, 0]);
-        add(icon(HL_ICONS.hike, 'act', 'Day hikes'), [s.lng, s.lat], [Math.round(Math.cos(th) * (R + 9)), Math.round(Math.sin(th) * (R + 9))]);
+        add(icon(HIKER, 'act', 'Day hikes'), [s.lng, s.lat], [Math.round(Math.cos(th) * (R + 9)), Math.round(Math.sin(th) * (R + 9))]);
       }
       s.acts.filter(a => a !== 'hike').slice(0, 2).forEach((a, j) => {
         const t = th + (j ? -1 : 1) * 0.9, r2 = R - 6;
