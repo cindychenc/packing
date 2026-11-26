@@ -11,7 +11,7 @@ export const MODEL = 'claude-haiku-5-5';   // fast and cheap; try 'claude-sonnet
 // Highlight types. Each one has an icon in the app (app.js, HL_ICONS); keep the two lists the same.
 export const KINDS = ['hike', 'glacier', 'mountain', 'volcano', 'valley', 'lake', 'beach', 'island', 'wildlife', 'food', 'wine', 'city',
   'culture', 'history', 'ruins', 'museum', 'market', 'nightlife', 'hot_springs', 'stay', 'festival', 'drive', 'boat', 'train', 'flight', 'time', 'other'];
-export const MODES = ['fly', 'bus', 'drive', 'train', 'boat'];
+export const MODES = ['fly', 'bus', 'drive', 'train', 'boat', 'hike'];
 
 const VOICE = `The voice (calm guidebook, a little of a knowledgeable friend):
 1. Facts first. Say what it is, where and how long, before any colour.
@@ -195,7 +195,11 @@ Rules:
 - Keep every stop within the nights per stop given. For more days, use more stops, never longer stays.
   Coming back through a town later is fine if the route needs it.
 - Each stop is one base, usually a town or city. Use the place's common English name, as it appears on a map.
-  No hotels, trails or neighbourhoods as stops. A lake or valley camp is fine for a hike or yurt stay.
+  No hotels or neighbourhoods as stops. A lake or valley camp is fine for a hike or yurt stay.
+- A multi-day hike or trek where the traveller sleeps in huts, refuges or camps along the way (the GR20, the W Trek,
+  the Huayhuash Circuit) is ONE stop, named after the trek ("GR20", "Huayhuash Circuit"), with a night for each night on the trail.
+  Never make each hut or refuge its own stop. Its coordinates are the middle of the trail.
+  The stop before it is the trailhead town, and its "next" is hike. The nights per stop don't apply to a trek stop.
 - Give each stop its country and rough coordinates, so it lands in the right place on the map.
 - Include the towns named in the route's highlights as stops, in the phase they belong to.
 
@@ -210,10 +214,12 @@ Long trips (only when the message says "long trip"):
 - If a date or season is given, keep every day's line right for the weather then (seasons are where the destination is:
   winter is June–August south of the equator). No high mountain hikes in deep winter, no beach days in the rainy season.
   If a day would only work in another season, plan what does work then instead.
-- For each stop, say how the traveller gets to the next stop (fly, bus, drive, train or boat). The very last stop of the route has none.
+- For each stop, say how the traveller gets to the next stop (fly, bus, drive, train, boat, or hike when they walk there,
+  as onto a trek from its trailhead). The very last stop of the route has none.
 - For each stop, give one short line per night ("plans"), in order: what to do that day, under 8 words, noun or verb first
   ("Day hike to Laguna Torre", "Old town and the Registan", "Rest day, hot springs"). Put the route's highlights on the right days.
-  Multi-day hikes take one line per day ("W Trek day 2: French Valley"). Don't mention the journey in; the app adds it.
+  A trek stop takes one line per day, numbered in order, with that day's stretch ("GR20 day 1: Calenzana to Ortu di u Piobbu",
+  "GR20 day 2: Ortu to Carrozzu"). Don't mention the journey in; the app adds it.
 - For each stop, write one sentence (at most 20 words) to the traveller on why it's in the trip.
   Example: "Base for the W Trek; buses to the park leave at 7 am."
 

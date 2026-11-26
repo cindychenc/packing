@@ -68,7 +68,7 @@
   const MODE_WORD = { fly: ['flight', 'flights'], bus: ['bus', 'buses'], drive: ['driving day', 'driving days'], train: ['train', 'trains'], boat: ['boat', 'boats'] };
   /* "21 nights" and "2 flights · 2 buses" from a route's stops (each stop's next = how you leave it). */
   function travelText(stops) {
-    const n = {}; (stops || []).slice(0, -1).forEach(s => { const m = MODE_WORD[s.next] ? s.next : 'bus'; n[m] = (n[m] || 0) + 1; });
+    const n = {}; (stops || []).slice(0, -1).forEach(s => { if (s.next === 'hike') return; const m = MODE_WORD[s.next] ? s.next : 'bus'; n[m] = (n[m] || 0) + 1; });   // walking onto a trek isn't transport
     return Object.keys(MODE_WORD).filter(m => n[m]).map(m => n[m] + ' ' + MODE_WORD[m][n[m] === 1 ? 0 : 1]).join(' · ');
   }
   /* The list view: phases, each with its days and its stops (nights + the thing to do there). */
@@ -129,7 +129,7 @@
        since the first is a travel day.
      - Lines Claude wrote for each night (stop.plans) or rows from an imported sheet fill the rest.
      - The last day says it's the last night. */
-  const MODE_FROM = { fly: 'Fly from ', bus: 'Bus from ', drive: 'Drive from ', train: 'Train from ', boat: 'Boat from ' };
+  const MODE_FROM = { fly: 'Fly from ', bus: 'Bus from ', drive: 'Drive from ', train: 'Train from ', boat: 'Boat from ', hike: 'Hike from ' };
   function dayPlans(phases, highlights, opts) {
     const travel = !(opts && opts.travel === false);
     const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => stops.push(s)));
@@ -177,11 +177,13 @@
       const n = Math.max(1, s.nights || 1), prev = stops[i - 1];
       const lines = Array.from({ length: n }, () => []);
       lines[0].push(i === 0 ? 'Arrive in ' + s.place : (MODE_FROM[prev.next] || 'Travel from ') + prev.place);
-      const travel = lines[0].slice();   // what a line mustn't repeat (the steps added below don't count)
+      const travel = lines[0].slice();
+      const plansIn = (Array.isArray(s.plans) ? s.plans : []).map(tidy), stepsHere = plansIn.filter(t => t && isStep(t)).length >= 2;   // a trek stop with its days written out   // what a line mustn't repeat (the steps added below don't count)
       let next = n > 1 ? 1 : 0;                       // highlights start the day after arriving, when there is one
       const used = [];
       (highlights || []).filter(hl => hl && !hl.skip && hl.place && norm(hl.place) === norm(s.place)).forEach(hl => {
         const text = tidy(hl.text), m = MULTI.exec(text), len = m ? Math.min(+(m[1] || m[2]), n - next) : 1;
+        if (m && len > 1 && stepsHere) return;   // the stop's own numbered days say it better than "Start X (5 days)"
         used.push(text);
         if (next >= n) { lines[n - 1].push(text); return; }
         if (m && len > 1) {
@@ -193,8 +195,9 @@
         } else { lines[next].push(text); next = Math.min(next + 1, n); }
       });
       // Claude's other lines for this stop become ideas, unless they repeat a highlight or the travel line
-      (Array.isArray(s.plans) ? s.plans : []).map(tidy).forEach((t, k) => {
+      plansIn.forEach((t, k) => {
         if (!t) return;
+        if (stepsHere && isStep(t)) { lines[Math.min(k, n - 1)].push(t); return; }
         const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(travel).some(u => w.some(x => norm(u).indexOf(x) >= 0));
         if (dup || /^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) return;
         if (isStep(t)) lines[Math.min(k, n - 1)].push(t);   // the plans are one per night, in order: a step stays on its night

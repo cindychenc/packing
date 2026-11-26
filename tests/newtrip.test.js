@@ -114,3 +114,13 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
     'Travel from Cusco · Stage 1: Bastia to Erbalunga', 'Stage 2: Erbalunga to Macinaggio', 'Last night']), 'steps prefilled in order: ' + JSON.stringify(plans));
   ok(eq(r.ideas.map(x => x.text), ['Swim in the Agnone pools', 'Erbalunga tower walk']), 'only the loose line is an idea: ' + JSON.stringify(r.ideas));
 }
+// a trek is one stop, walked onto from its trailhead; its numbered days beat the highlight's "Start … (n days)"
+{
+  const r = T.crucialPlans([{ stops: [
+    { place: 'Calenzana', nights: 1, next: 'hike', plans: ['Arrive, pack for the trail'] },
+    { place: 'GR20', nights: 3, next: 'bus', plans: ['GR20 day 1: Calenzana to Ortu', 'GR20 day 2: Ortu to Carrozzu', 'GR20 day 3: Carrozzu to Asco'] },
+    { place: 'Bastia', nights: 1, plans: ['Old port'] }] }], [{ text: 'GR20 north, 3 days', place: 'GR20' }]);
+  const plans = r.days.map(d => d.plan);
+  ok(eq(plans, ['Arrive in Calenzana', 'Hike from Calenzana · GR20 day 1: Calenzana to Ortu', 'GR20 day 2: Ortu to Carrozzu', 'GR20 day 3: Carrozzu to Asco', 'Bus from GR20 · Last night']), 'trek stop: ' + JSON.stringify(plans));
+  ok(T.travelText([{ next: 'hike' }, { next: 'bus' }, {}]) === '1 bus', 'walking onto a trek is not counted as transport');
+}

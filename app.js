@@ -1197,7 +1197,7 @@
   }
   const span3 = (fmt, st, len) => fmt.span(st, st + len - 1) + ' · ' + plural(len, 'day');
 
-  const legMode = t => /\b(fly|flight|plane)\b/i.test(t || '') ? 'fly' : /\btrain\b/i.test(t || '') ? 'train' : /\b(bus|coach)\b/i.test(t || '') ? 'bus'
+  const legMode = t => /^hike from\b/i.test(t || '') ? 'hike' : /\b(fly|flight|plane)\b/i.test(t || '') ? 'fly' : /\btrain\b/i.test(t || '') ? 'train' : /\b(bus|coach)\b/i.test(t || '') ? 'bus'
     : /\b(drive|car)\b/i.test(t || '') ? 'drive' : /\b(ferry|boat)\b/i.test(t || '') ? 'boat' : 'any';
   const LI = d => '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
   const LEG_ICON = { fly: LI('M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z'),
@@ -1205,6 +1205,7 @@
     train: LI('M8 3h8a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3zM5 11h14M8 21l2-3M16 21l-2-3M9 15h.01M15 15h.01'),
     drive: LI('M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M12 14v7M10 12L3.3 10M14 12l6.7-2'),
     boat: LI('M2 18h20a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4zM21 14L10 2 3 14h18zM10 2v16'),
+    hike: LI('M8 3l4 8 5-5 5 15H2L8 3z'),
     any: LI('M5 12h14M13 6l6 6-6 6') };
 
   /* Ideas for a stop: the route's other suggestions (stop_ideas), by place. A day's plan can hold several, joined with " · ". */
