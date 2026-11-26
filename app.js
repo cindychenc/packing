@@ -570,12 +570,10 @@
         const col = (cls, fn) => R.map((x, k) => h('div', { class: 'cx-c ' + cls + (k === st.cur ? ' on' : ''), onclick: () => { if (st.cur !== k) { st.cur = k; if (st.tw !== k) st.tw = null; draw(); } } }, fn(x, k)));
         const row = (label, cls, fn) => [h('div', { class: 'cx-rl ' + cls }, label), ...col(cls, fn)];
         const busy = k => st.redraw === k;
-        const mini = x => {
-          if (st.view === 'list') return h('div', { class: 'cx-pl' }, NT.phaseList(x.r.phases, (x.r.highlights || []).concat(st.draft.shared || [])).map(g => h('div', null,
+        // each route's phases and stops, as their own row under the maps (no Map / List switch)
+        const stopList = x => h('div', { class: 'cx-pl' }, NT.phaseList(x.r.phases, (x.r.highlights || []).concat(st.draft.shared || [])).map(g => h('div', null,
             h('div', { class: 'cx-pgh' }, g.name || 'Phase', h('span', null, plural(g.days, 'day'))),
             g.stops.map(t => h('div', { class: 'cx-ps' }, h('span', { class: 'pd' }, plural(t.nights, 'day')), h('span', null, h('b', null, t.place), t.what ? h('i', null, t.what) : null))))));
-          return routeMap(x);
-        };
         const tweakCell = (x, k) => {
           if (k !== st.cur) return null;
           if (busy(k)) return h('span', { class: 'muted' }, 'Redrawing this route…');
@@ -587,16 +585,14 @@
             h('div', { class: 'twa' }, h('button', { type: 'button', class: 'btn small', onclick: () => { st.tw = null; st.twText = ''; draw(); } }, 'Cancel'),
               h('button', { type: 'button', class: 'btn small primary', onclick: () => redraw(k) }, 'Redraw this route')));
         };
-        const vbtn = (v, label) => h('button', { type: 'button', class: 'seg-btn' + (st.view === v ? ' on' : ''), 'aria-pressed': String(st.view === v), onclick: () => { st.view = v; draw(); } }, label);
         const hls = x => (x.r.highlights || []).filter(hl => !hl.skip);
         const skips = x => (x.r.highlights || []).filter(hl => hl.skip).map(hl => NT.tidy(hl.text)).join('; ');
         return [h('div', { class: 'rhdr' }, h('div', { class: 'nt-ttl' }, 'Three ways through ' + destName()), st.draft.description ? h('p', { class: 'lead' }, NT.tidy(st.draft.description)) : null),
-          h('div', { class: 'cx-bar' }, h('div', { class: 'seg', role: 'group', 'aria-label': 'Show routes as' }, vbtn('map', 'Map'), vbtn('list', 'List'))),
           h('div', { class: 'cx-tb' + (R.length === 2 ? ' two' : R.length === 1 ? ' one' : '') },
             row('', 'hd', (x, k) => [h('span', { class: 'cx-nm', role: 'radio', 'aria-checked': String(k === st.cur), tabindex: '0',
               onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); st.cur = k; draw(); } } }, h('span', { class: 'cx-radio', 'aria-hidden': 'true' }), NT.tidy(x.r.name)),
               x.r.tag ? h('span', null, h('span', { class: 'cx-tag' }, NT.tidy(x.r.tag))) : null]),
-            row('', 'mp', x => busy(R.indexOf(x)) ? h('div', { class: 'cx-map none' }, h('div', { class: 'spinner', 'aria-hidden': 'true' })) : mini(x)),
+            row('', 'mp', x => busy(R.indexOf(x)) ? h('div', { class: 'cx-map none' }, h('div', { class: 'spinner', 'aria-hidden': 'true' })) : routeMap(x)),
             row('Only this one', '', x => h('span', { class: 'cx-only' }, NT.tidy(x.r.only || x.r.pitch))),
             row('Highlights', '', x => hls(x).map(hl => h('span', { class: 'cx-hl' }, svg(hlIcon(hl.kind, 18)), h('span', null, NT.tidy(hl.text))))),
             row('Leaves out', '', x => h('span', { class: 'cx-minus' }, skips(x) || '–')),
@@ -604,6 +600,7 @@
               h('br'), NT.travelText(x.stops.map(s => ({ next: s.next }))) || 'One base',
               h('br'), (() => { const a = x.stops[0], b = x.stops[x.stops.length - 1]; if (!a || !b) return '';
                 return x.r.shape === 'loop' || a.place === b.place ? 'Loop from ' + a.place : 'Into ' + a.place + ', out of ' + b.place; })())),
+            row('Stops', '', stopList),
             row('', 'ft', tweakCell))];
       }
       /* One Mapbox GL map per route, kept with the route so picking a column or switching Map/List doesn't rebuild it.
