@@ -101,3 +101,16 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
   ok(r.days.every(d => d.auto === !!d.plan) && r.days[2].notes === 'Base for Torres.', 'filled days are marked auto; why stays in notes');
   ok(eq(r.ideas.map(x => x.place + ': ' + x.text), ['Santiago: Cerro San Cristóbal funicular', 'Puerto Natales: Milodon Cave', 'Puerto Natales: Walk the Puerto Natales waterfront']), 'ideas: ' + JSON.stringify(r.ideas));
 }
+// the steps of a multi-day thing stay on their days, in order, and aren't ideas
+{
+  const r = T.crucialPlans([{ stops: [
+    { place: 'Calenzana', nights: 2, next: 'bus', plans: ['Arrive', 'GR20 day 1'] },
+    { place: 'Vizzavona', nights: 4, next: 'bus', plans: ['GR20 day 2', 'GR20 day 3', 'GR20 day 4', 'Swim in the Agnone pools'] },
+    { place: 'Cusco', nights: 3, plans: ['Inca Trail 1 of 3', 'Inca Trail 2 of 3', 'Inca Trail 3 of 3'] },
+    { place: 'Bastia', nights: 3, plans: ['Stage 1: Bastia to Erbalunga', 'Stage 2: Erbalunga to Macinaggio', 'Erbalunga tower walk'] }] }], []);
+  const plans = r.days.map(d => d.plan);
+  ok(eq(plans, ['Arrive in Calenzana', 'GR20 day 1', 'Bus from Calenzana · GR20 day 2', 'GR20 day 3', 'GR20 day 4', null,
+    'Bus from Vizzavona · Inca Trail 1 of 3', 'Inca Trail 2 of 3', 'Inca Trail 3 of 3',
+    'Travel from Cusco · Stage 1: Bastia to Erbalunga', 'Stage 2: Erbalunga to Macinaggio', 'Last night']), 'steps prefilled in order: ' + JSON.stringify(plans));
+  ok(eq(r.ideas.map(x => x.text), ['Swim in the Agnone pools', 'Erbalunga tower walk']), 'only the loose line is an idea: ' + JSON.stringify(r.ideas));
+}

@@ -163,12 +163,21 @@
   function crucialPlans(phases, highlights) {
     const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => stops.push(s)));
     const norm = t => String(t || '').toLowerCase();
+    // Lines that are steps of one multi-day thing ("GR20 day 1", "GR20 day 3", "Stage 2: Ortu to Petra Piana", "Inca Trail 2 of 4")
+    // are fixed too: they go on their own day, in order, instead of becoming ideas. A step needs a number and either
+    // an "x of y" or a name it shares with another line of the route.
+    const STEP = /\b(?:day|stage|leg|[ée]tape|section|part)\s*\d{1,2}\b|\b\d{1,2}\s*(?:of|\/)\s*\d{1,2}\b/i;
+    const stepKey = t => norm(t).replace(/\b(?:day|stage|leg|[ée]tape|section|part)\s*\d{1,2}\b/g, ' ').replace(/\b\d{1,2}\s*(?:of|\/)\s*\d{1,2}\b/g, ' ')
+      .replace(/[:–—-].*$/, '').replace(/[^a-z0-9à-ÿ]+/g, ' ').trim() || (norm(t).match(/\b(day|stage|leg|[ée]tape|section|part)\b/) || [''])[0];   // "Stage 2: Ortu to Petra Piana" groups as "stage"
+    const keyN = {}; stops.forEach(s => (Array.isArray(s.plans) ? s.plans : []).forEach(t => { if (STEP.test(t || '')) { const k = stepKey(t); if (k) keyN[k] = (keyN[k] || 0) + 1; } }));
+    const isStep = t => STEP.test(t) && (/\b\d{1,2}\s*(?:of|\/)\s*\d{1,2}\b/i.test(t) || keyN[stepKey(t)] >= 2);
     const words = t => norm(t).split(/[^a-zà-ÿ]+/).filter(w => w.length >= 5);
     const days = [], ideas = [];
     stops.forEach((s, i) => {
       const n = Math.max(1, s.nights || 1), prev = stops[i - 1];
       const lines = Array.from({ length: n }, () => []);
       lines[0].push(i === 0 ? 'Arrive in ' + s.place : (MODE_FROM[prev.next] || 'Travel from ') + prev.place);
+      const travel = lines[0].slice();   // what a line mustn't repeat (the steps added below don't count)
       let next = n > 1 ? 1 : 0;                       // highlights start the day after arriving, when there is one
       const used = [];
       (highlights || []).filter(hl => hl && !hl.skip && hl.place && norm(hl.place) === norm(s.place)).forEach(hl => {
@@ -184,9 +193,12 @@
         } else { lines[next].push(text); next = Math.min(next + 1, n); }
       });
       // Claude's other lines for this stop become ideas, unless they repeat a highlight or the travel line
-      (Array.isArray(s.plans) ? s.plans : []).map(tidy).filter(Boolean).forEach(t => {
-        const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(lines[0]).some(u => w.some(x => norm(u).indexOf(x) >= 0));
-        if (!dup && !/^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, '') });
+      (Array.isArray(s.plans) ? s.plans : []).map(tidy).forEach((t, k) => {
+        if (!t) return;
+        const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(travel).some(u => w.some(x => norm(u).indexOf(x) >= 0));
+        if (dup || /^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) return;
+        if (isStep(t)) lines[Math.min(k, n - 1)].push(t);   // the plans are one per night, in order: a step stays on its night
+        else ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, '') });
       });
       lines.forEach((d, k) => days.push({ plan: d.join(' · ') || null, notes: k === 0 && s.why ? tidy(s.why) : null, auto: d.length > 0 }));
     });
