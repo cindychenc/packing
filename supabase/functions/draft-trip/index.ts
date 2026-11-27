@@ -112,7 +112,10 @@ Deno.serve(async (req) => {
         st.leg_note = typeof st.leg_note === 'string' && st.leg_note.trim() ? st.leg_note.trim().replace(/\.$/, '') : null;
         if (st.leg_note && (st.leg_note.split(/\s+/).length > 8 || /\b(by|from|to)\b.*\b(train|bus|railway|ferry|flight|car)\b|\b\d+(\.\d+)?\s*(h|hrs?|hours?)\b/i.test(st.leg_note))) st.leg_note = null;
         st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
-        st.extras = (Array.isArray(st.extras) ? st.extras : []).map((x: unknown) => String(x ?? '').trim().slice(0, 120)).filter(Boolean).slice(0, 4);
+        const w = (x: unknown) => (typeof x === 'string' ? x.trim().slice(0, 120) : '');
+        st.plan_where = st.plans.map((_: string, k: number) => w(Array.isArray(st.plan_where) ? st.plan_where[k] : ''));
+        st.extras = (Array.isArray(st.extras) ? st.extras : []).map((x: any) => typeof x === 'string' ? { text: x.trim().slice(0, 120), where: '' } : { text: w(x?.text), where: w(x?.where) })
+          .filter((x: any) => x.text).slice(0, 4);
         st.rest = st.rest === true;
         if (!(Math.abs(+st.lat) <= 90 && Math.abs(+st.lng) <= 180)) { delete st.lat; delete st.lng; }
       });
@@ -146,7 +149,7 @@ Deno.serve(async (req) => {
     if (!stops.length) return;
     let have = stops.reduce((a: number, s: any) => a + s.nights, 0);
     for (let k = stops.length - 1; k >= 0 && have > want; k--) {
-      const cut = Math.min(stops[k].nights - 1, have - want); stops[k].nights -= cut; stops[k].plans = stops[k].plans.slice(0, stops[k].nights); have -= cut;
+      const cut = Math.min(stops[k].nights - 1, have - want); stops[k].nights -= cut; stops[k].plans = stops[k].plans.slice(0, stops[k].nights); stops[k].plan_where = stops[k].plan_where.slice(0, stops[k].nights); have -= cut;
     }
     if (have < want) console.warn('filled', routes[i].name, p.name, want - have, 'nights');
     for (let cap = hi + 2; have < want; cap = Infinity) {
@@ -156,7 +159,7 @@ Deno.serve(async (req) => {
         const rest = stops.filter((s: any) => s.rest && s.nights < cap + 1);
         const room = rest.length ? rest : stops.filter((s: any) => s.nights < cap); if (!room.length) break;
         const low = Math.min(...room.map((s: any) => s.nights));
-        for (const s of room) { if (have >= want) break; if (s.nights === low) { s.nights++; have++; grew = true; s.plans.push('Spare day: rest or a day trip from ' + s.place); } }
+        for (const s of room) { if (have >= want) break; if (s.nights === low) { s.nights++; have++; grew = true; s.plans.push('Spare day: rest or a day trip from ' + s.place); s.plan_where.push(''); } }
       }
       if (!grew && cap === Infinity) break;
     }
@@ -170,18 +173,18 @@ Deno.serve(async (req) => {
   filled.forEach((phases: any[], i: number) => {
     const ph = phases.filter((p: any) => p.stops.length); if (!ph.length) return;
     const take = (p: any) => { const big = p.stops.reduce((m: any, s: any) => (s.nights > (m ? m.nights : 1) ? s : m), null); if (!big) return false;
-      big.nights--; big.plans = big.plans.slice(0, big.nights); return true; };
+      big.nights--; big.plans = big.plans.slice(0, big.nights); big.plan_where = big.plan_where.slice(0, big.nights); return true; };
     const first = ph[0], last = ph[ph.length - 1];
     const loop = endAt && ask.from && same(endAt, ask.from) || routes[i].shape === 'loop';
     if (ask.from && !same(first.stops[0].place, ask.from) && take(first)) {
-      first.stops.unshift({ place: ask.from, nights: 1, next: road, country: first.stops[0].country, plans: ['Arrive, settle in'], extras: [], why: 'Where the trip starts.', added: true });
+      first.stops.unshift({ place: ask.from, nights: 1, next: road, country: first.stops[0].country, plans: ['Arrive, settle in'], plan_where: [''], extras: [], why: 'Where the trip starts.', added: true });
       console.warn('added start', routes[i].name, ask.from);
     }
     const end = endAt || (loop && ask.from) || null;
     const lastStop = last.stops[last.stops.length - 1];
     if (end && !same(lastStop.place, end) && take(last)) {
       lastStop.next = lastStop.next || road;
-      last.stops.push({ place: end, nights: 1, country: lastStop.country, plans: ['Last night'], extras: [], why: 'Where the trip ends.', added: true });
+      last.stops.push({ place: end, nights: 1, country: lastStop.country, plans: ['Last night'], plan_where: [''], extras: [], why: 'Where the trip ends.', added: true });
       console.warn('added end', routes[i].name, end);
     }
   });

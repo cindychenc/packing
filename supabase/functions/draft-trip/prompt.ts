@@ -235,6 +235,9 @@ Long trips (only when the message says "long trip"):
   "GR20 day 2: Ortu to Carrozzu"). Don't mention the journey in; the app adds it.
 - For each stop (not a trek stop), also give 3 more things to do there ("extras"), different from its plans, in the same
   short form. They're offered as ideas for the free days.
+- For each plan line and each extra, name the one specific place it happens at, as it's called on a map ("Lago di Misurina",
+  "Rifugio Lagazuoi", "Museo Regole d'Ampezzo"), so the app can pin it. Leave it empty when there's no single place
+  (a rest day, a town walk, "local food"). Use "plan_where", one entry per plan line in the same order, and "where" on each extra.
 - A leg's note is only for something the traveller must plan around, under 6 words; leave it out otherwise.
   Don't restate the route, the mode or the hours in it.
 - For each stop, write one sentence (at most 20 words) to the traveller on why it's in the trip.
@@ -300,8 +303,11 @@ export const STOPS_TOOL = {
                   rest: { type: 'boolean', description: 'True for a rest stop on a long trip (a longer, easy stay in a bigger city or comfortable base).' },
                   plans: { type: 'array', items: { type: 'string' },
                     description: 'One short line per night at this stop, in order: what to do that day, under 8 words. The app adds the journey in, so the first line is about the place.' },
-                  extras: { type: 'array', items: { type: 'string' }, maxItems: 4,
-                    description: '3 more things to do at this stop, under 8 words each, not in plans. Left out for a trek stop.' },
+                  plan_where: { type: 'array', items: { type: 'string' },
+                    description: 'One per plan line, same order: the specific place it happens at, as named on a map, or "" when there is none.' },
+                  extras: { type: 'array', maxItems: 4, description: '3 more things to do at this stop, not in plans. Left out for a trek stop.',
+                    items: { type: 'object', required: ['text'], properties: { text: { type: 'string', description: 'Under 8 words.' },
+                      where: { type: 'string', description: 'The specific place, as named on a map, or "".' } } } },
                 },
               },
             },

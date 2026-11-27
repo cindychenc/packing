@@ -34,7 +34,9 @@ try:
           { name: 'Puerto Natales', label: 'Chile', kind: 'place', country: 'Chile', cc: 'CL', lat: -51.73, lng: -72.5 },
           { name: 'El Chaltén', label: 'Argentina', kind: 'place', country: 'Argentina', cc: 'AR', lat: -49.33, lng: -72.89 },
           { name: 'Porto', label: 'Portugal', kind: 'place', country: 'Portugal', cc: 'PT', lat: 41.15, lng: -8.61 } ];
-          window.SUITCASE_MAP_FAKE = true;""")
+          window.SUITCASE_MAP_FAKE = true;
+          // where ideas are: Milodon Cave is near Puerto Natales; a far-away 'Grey Glacier boat' must not be pinned
+          window.SUITCASE_IDEAS_FAKE = { 'milodon cave': { lat: -51.57, lng: -72.62 }, 'grey glacier boat': { lat: -45.0, lng: -72.0 } };""")
         page.on('console', lambda m: m.type == 'error' and errors.append('console: ' + m.text))
         page.on('pageerror', lambda e: errors.append('pageerror: ' + str(e)))
         U = 'http://127.0.0.1:8000/'
@@ -406,6 +408,11 @@ try:
         page.click(f'.f-row[data-day="{pn[0]}"] .f-in'); page.wait_for_selector('.pmi:not(.hidden)')
         ok('Grey Glacier boat' in page.inner_text('.pmi') and 'Milodon Cave' in page.inner_text('.pmi') and 'Puerto Natales' in page.inner_text('.pmap-tag')
            and page.is_visible('.pmap-z') and page.query_selector(f'.f-row.sel[data-day="{pn[0]}"]'), "picking a day shows its stop's ideas on the map")
+        page.wait_for_timeout(300)
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        mc = [x for x in db['stop_ideas'] if x['text'] == 'Milodon Cave'][0]; gg = [x for x in db['stop_ideas'] if x['text'] == 'Grey Glacier boat'][0]
+        ok(mc.get('lat') == -51.57 and mc.get('geo_tried') and gg.get('lat') is None and gg.get('geo_tried'), f'ideas are placed only when found near the stop ({mc.get("lat")}, {gg.get("lat")})')
+        ok(page.inner_text('.pmi-r:has-text("Milodon Cave") .pmi-l') == 'A' and page.inner_text('.pmi-r:has-text("Grey Glacier boat") .pmi-l') == '•', 'only placed ideas get a map letter')
         page.click('.pmi-r:has-text("Grey Glacier boat") .f-use'); page.wait_for_timeout(400)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
         dd = [d for d in db['days'] if d['id'] == pn[0]][0]

@@ -107,6 +107,8 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
     { place: 'Taipei', nights: 1, next: 'train', hours: 1.5, leg_note: 'Taipei to Yilan by Taiwan Railway, about 1.5 hours', plans: ['Old town'], extras: ['Night market'] },
     { place: 'Yilan', nights: 2, plans: ['Hot springs and farm villages'], extras: ['Luodong night market', 'Jiaoxi hot springs', 'Hot springs and farm villages'] }] }], []);
   ok(r.days[1].plan === 'Train from Taipei (~1.5 h)', 'note retelling the route dropped: ' + r.days[1].plan);
+  const r2 = T.crucialPlans([{ stops: [{ place: 'Cortina', nights: 2, plans: ['Lake Misurina easy walk', 'Town walk'], plan_where: ['Lago di Misurina', ''], extras: [{ text: 'Lagazuoi tunnels', where: 'Rifugio Lagazuoi' }, 'Old string extra'] }] }], []);
+  ok(eq(r2.ideas.map(x => [x.text, x.where]), [['Lake Misurina easy walk', 'Lago di Misurina'], ['Town walk', null], ['Lagazuoi tunnels', 'Rifugio Lagazuoi'], ['Old string extra', null]]), 'ideas keep where they are: ' + JSON.stringify(r2.ideas));
   ok(eq(r.ideas.filter(x => x.place === 'Yilan').map(x => x.text), ['Hot springs and farm villages', 'Luodong night market', 'Jiaoxi hot springs']), 'extras are ideas, not repeating a plan: ' + JSON.stringify(r.ideas));
 }
 // a travel line carries the leg's rough hours, Claude's note, and "check locally" when the road check flagged it

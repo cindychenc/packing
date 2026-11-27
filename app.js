@@ -846,8 +846,10 @@
           // Both need migration 005; before it they're skipped with a warning and the trip still works.
           const autoIds = layout.phases.flatMap(p => p.days).filter(d => d.auto).map(d => d.id);
           if (autoIds.length) await sb.from('days').update({ plan_auto: true }).in('id', autoIds).then(x => { if (x && x.error) console.warn('prefilled marks not saved', x.error.message); });
-          const ideas = (o.route && o.route.ideas || []).slice(0, 400).map((x, i) => ({ trip_id: data.id, place: x.place, text: x.text.slice(0, 300), source: 'route', sort: i }));
-          if (ideas.length) sb.from('stop_ideas').insert(ideas).then(x => { if (x && x.error) console.warn('ideas not saved', x.error.message); });
+          const ideas = (o.route && o.route.ideas || []).slice(0, 400).map((x, i) => ({ trip_id: data.id, place: x.place, text: x.text.slice(0, 300), source: 'route', sort: i, where_name: x.where ? x.where.slice(0, 120) : null }));
+          // where_name needs migration 007; before it, the ideas are saved without it
+          if (ideas.length) sb.from('stop_ideas').insert(ideas).then(x => { if (x && x.error && /where_name/.test(x.error.message || '')) return sb.from('stop_ideas').insert(ideas.map(i => { const c = Object.assign({}, i); delete c.where_name; return c; })); return x; })
+            .then(x => { if (x && x.error) console.warn('ideas not saved', x.error.message); });
         } else {
           const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
           pendingStop = one;
@@ -1469,9 +1471,10 @@
     }
     const seen = new Set(have.map(normIdea));
     const rows = data.ideas.filter(x => x && x.title && !seen.has(normIdea(x.title)) && seen.add(normIdea(x.title))).map((x, i) => ({ trip_id: tripData.trip.id, place: S.s.place, text: x.title.slice(0, 300),
-      note: x.note ? x.note.slice(0, 300) : null, len: x.len ? x.len.slice(0, 40) : null, reason: x.because ? ('You like ' + x.because).slice(0, 80) : null, source: cat, sort: 1000 + i }));
+      note: x.note ? x.note.slice(0, 300) : null, len: x.len ? x.len.slice(0, 40) : null, reason: x.because ? ('You like ' + x.because).slice(0, 80) : null, source: cat, sort: 1000 + i, where_name: x.where ? String(x.where).slice(0, 120) : null }));
     if (rows.length) {
-      const ins = await sb.from('stop_ideas').insert(rows).select();
+      let ins = await sb.from('stop_ideas').insert(rows).select();
+      if (ins.error && /where_name/.test(ins.error.message || '')) ins = await sb.from('stop_ideas').insert(rows.map(x => { const c = Object.assign({}, x); delete c.where_name; return c; })).select();   // before migration 007
       if (ins.error) { console.warn('ideas not saved', ins.error.message); rows.forEach((x, i) => { x.id = 'tmp-' + cat + '-' + Date.now() + '-' + i; }); }   // still shown this time
       (tripData.ideas = tripData.ideas || []).push(...(ins.error ? rows : ins.data));
     } else moreErr[k] = 'Nothing new turned up for ' + S.s.place + '.';
@@ -1479,10 +1482,29 @@
   }
 
   // The map's label, its ideas card and markers, and its zoom, for the selected day (or the whole phase).
+  /* Where each idea is: its place name (or, without one, its title) looked up near the stop. Only a match within 40 km
+     (25 km by title) counts; the rest stay in the list without a pin. Saved with the idea (migration 007), so it's looked up once. */
+  const geoBusy = {};
+  async function placeIdeas(place) {
+    const at = placeAt()[place]; if (!at || geoBusy[place]) return;
+    const todo = ideasFor(place).filter(x => x.lat == null && !x.geo_tried); if (!todo.length) return;
+    geoBusy[place] = true;
+    for (const x of todo) {
+      const q = x.where_name || ideaParts(x.text).title;
+      const hit = await PLACES.findNear(q, at, x.where_name ? 40 : 25);
+      x.geo_tried = true; if (hit) { x.lat = hit.lat; x.lng = hit.lng; }
+      if (!String(x.id).startsWith('tmp-')) sb.from('stop_ideas').update({ lat: x.lat == null ? null : x.lat, lng: x.lng == null ? null : x.lng, geo_tried: true }).eq('id', x.id)
+        .then(u => { if (u && u.error && !/geo_tried|lat|column/.test(u.error.message || '')) console.warn('idea place not saved', u.error.message); });
+    }
+    delete geoBusy[place];
+    const S2 = selInfo(); if (S2 && S2.s.place === place) paintSel();
+  }
+
   function paintSel() {
     if (!pmap.card || !pmap.card.isConnected) return;
     const S = selInfo(), all = S ? ideasFor(S.s.place) : [];
     const rec = all.filter(REC).slice(0, 6), cats = S ? ['you', 'top'] : [];
+    if (S) setTimeout(() => placeIdeas(S.s.place), 0);
     if (selCat && !cats.includes(selCat)) selCat = null;
     const whole = () => { selDay = null; selIdea = null; selCat = null; document.querySelectorAll('.pcard.live .f-row.sel').forEach(r => r.classList.remove('sel')); paintSel(); };
     pmap.tag.replaceChildren(...[S ? pmap.phaseTag + ' · ' + S.s.place : pmap.phaseTag + ' · ' + plural(pmap.nStops, 'stop'),
@@ -1490,15 +1512,18 @@
     let rows = [];
     if (S) {
       const day = S.p.days[S.j], mine = planParts(day.plan), dn = selDayName(S.st + S.j);
+      let pin = 0;   // letters go to ideas with a place on the map, in list order
       const row = (x, k, onMap) => {
+        const pinned = x.lat != null && x.lng != null;
         const n = normIdea(x.text), here = mine.includes(n), other = [];
         for (let jj = S.s.start; jj < S.s.start + S.s.n; jj++) if (jj !== S.j && planParts(S.p.days[jj].plan).includes(n)) other.push(selDayName(S.st + jj));
         const parts = x.note || x.len ? { title: x.text, why: x.note || '', len: x.len || '' } : ideaParts(x.text);
-        return Object.assign({ id: x.id, text: x.text, letter: onMap ? 'ABCDEF'[k] : '+', reason: x.reason || '', here, other, st: here ? 'here' : other.length ? 'else' : 'new',
+        return Object.assign({ id: x.id, text: x.text, lat: pinned ? x.lat : null, lng: pinned ? x.lng : null, letter: pinned ? 'ABCDEFGHIJ'[pin++] : '•', reason: x.reason || '', here, other, st: here ? 'here' : other.length ? 'else' : 'new',
           status: here ? 'In ' + dn : other.length ? 'Planned on ' + other.join(', ') : '' }, parts);
       };
       rows = rec.map((x, k) => row(x, k, true));
       const more = selCat ? all.filter(x => x.source === selCat).map((x, k) => row(x, k, false)) : [];
+      pmap.morePins = more;   // an open Find more list pins its ideas too
       const add = x => { const cur = tripData.days.find(d => d.id === day.id) || day; if (planParts(cur.plan).includes(normIdea(x.text))) return;   // a double click adds it once
         setDayPlan(day.id, cur.plan ? cur.plan + ' · ' + x.text : x.text); };
       const remove = x => setDayPlan(day.id, String(day.plan || '').split(' · ').filter(t => normIdea(t) !== normIdea(x.text)).join(' · '));
@@ -1536,7 +1561,7 @@
       pmap.card.replaceChildren(...kids.filter(Boolean));   // replaceChildren would print a null
       pmap.card.setAttribute('aria-label', 'Ideas for ' + dn + ' in ' + S.s.place);
       pmap.card.classList.remove('hidden');
-    } else { pmap.card.classList.add('hidden'); pmap.card.replaceChildren(); }
+    } else { pmap.card.classList.add('hidden'); pmap.card.replaceChildren(); pmap.morePins = []; }
     camera(S, rows);
   }
   function camera(S, rows) {
@@ -1549,13 +1574,19 @@
       return;
     }
     pmap.zoomed = true; pmap.el.classList.toggle('zoomed', rows.length > 0);
-    // the stop sits in the top part of the map, above the ideas card
-    m.easeTo({ center: [pt.lng, pt.lat], zoom: 10, padding: { top: 0, left: 0, right: 0, bottom: rows.length ? Math.round((pmap.el.clientHeight || 600) * .45) : 0 }, duration: 600 });
-    rows.forEach((x, k) => {
-      const a = -Math.PI / 2 + (k + .5) * 2 * Math.PI / Math.max(rows.length, 3);
+    // the stop and its pinned ideas fit in the top part of the map, above the ideas card
+    const pins = rows.concat(pmap.morePins || []).filter(x => x.lat != null);
+    const pad = { top: 60, left: 50, right: 50, bottom: rows.length || pins.length ? Math.round((pmap.el.clientHeight || 600) * .45) + 20 : 50 };
+    if (pins.length) {
+      let a = [pt.lng, pt.lat], b = [pt.lng, pt.lat];
+      pins.forEach(x => { a = [Math.min(a[0], x.lng), Math.min(a[1], x.lat)]; b = [Math.max(b[0], x.lng), Math.max(b[1], x.lat)]; });
+      m.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+      m.fitBounds([a, b], { padding: pad, maxZoom: 12, duration: 600 });
+    } else m.easeTo({ center: [pt.lng, pt.lat], zoom: 10, padding: { top: 0, left: 0, right: 0, bottom: pad.bottom }, duration: 600 });
+    pins.forEach(x => {
       const el = h('button', { class: 'pmk-i ' + x.st + (selIdea === x.id ? ' on' : ''), title: x.title, 'aria-label': 'Idea: ' + x.title + (x.status ? ' (' + x.status + ')' : ''),
         onclick: e => { e.stopPropagation(); selIdea = selIdea === x.id ? null : x.id; paintSel(); } }, x.here ? '✓' : x.letter);
-      pmap.marks.push(new pmap.mb.Marker({ element: el, offset: [Math.round(Math.cos(a) * 62), Math.round(Math.sin(a) * 62)] }).setLngLat([pt.lng, pt.lat]).addTo(m));
+      pmap.marks.push(new pmap.mb.Marker({ element: el }).setLngLat([x.lng, x.lat]).addTo(m));
     });
   }
 

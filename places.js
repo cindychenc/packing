@@ -106,6 +106,24 @@
     } catch (e) { return rough; }
   }
 
+  /* A thing to do near a stop ("Lago di Misurina", "Rifugio Lagazuoi"): Mapbox Search Box, which knows lakes, huts, museums
+     and other points of interest, biased to the stop. Only a match within maxKm of the stop counts, else null. */
+  async function findNear(q, near, maxKm) {
+    const fake = root.SUITCASE_IDEAS_FAKE;
+    if (fake) { const hit = fake[String(q || '').toLowerCase()]; return hit && km(hit, near) <= maxKm ? hit : null; }
+    const token = (root.SUITCASE_CONFIG || {}).mapboxToken;
+    if (!token || !String(q || '').trim() || !near || near.lat == null) return null;
+    try {
+      const res = await fetch('https://api.mapbox.com/search/searchbox/v1/forward?q=' + encodeURIComponent(q) + '&proximity=' + (+near.lng) + ',' + (+near.lat) +
+        '&limit=1&language=en&access_token=' + encodeURIComponent(token));
+      if (!res.ok) return null;
+      const f = ((await res.json()).features || [])[0], c = f && f.geometry && f.geometry.coordinates;
+      if (!c) return null;
+      const hit = { lat: c[1], lng: c[0], name: f.properties && f.properties.name };
+      return km(hit, near) <= maxKm ? hit : null;
+    } catch (e) { return null; }
+  }
+
   // Google's encoded polyline (precision 5), as Mapbox Static Images wants for path overlays.
   function polyline(points) {
     let out = '', pLat = 0, pLng = 0;
@@ -138,7 +156,7 @@
       '@2x?padding=40&access_token=' + encodeURIComponent(token);
   }
 
-  const api = { suggest, lookup, ccFor, km, staticMap, curved, polyline, phaseNameFor, continentOf, fromFeature };
+  const api = { suggest, lookup, findNear, ccFor, km, staticMap, curved, polyline, phaseNameFor, continentOf, fromFeature };
   root.SuitcasePlaces = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -204,16 +204,18 @@
         } else { lines[next].push(text); next = Math.min(next + 1, n); }
       });
       // Claude's other lines for this stop become ideas, unless they repeat a highlight or the travel line
+      const whereAt = k => (Array.isArray(s.plan_where) && typeof s.plan_where[k] === 'string' && s.plan_where[k].trim()) || null;
       plansIn.forEach((t, k) => {
         if (!t) return;
         if (stepsHere && isStep(t)) { lines[Math.min(k, n - 1)].push(t); return; }
         const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(travel).some(u => w.some(x => norm(u).indexOf(x) >= 0));
         if (dup || /^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) return;
         if (isStep(t)) lines[Math.min(k, n - 1)].push(t);   // the plans are one per night, in order: a step stays on its night
-        else ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, '') });
+        else ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, ''), where: whereAt(k) });
       });
       // the stop's extras are ideas too (so a stop whose plans all became fixed days still has some)
-      (Array.isArray(s.extras) ? s.extras : []).map(tidy).forEach(t => { if (t && !ideas.some(x => x.place === s.place && x.text.toLowerCase() === t.toLowerCase())) ideas.push({ place: s.place, text: t }); });
+      (Array.isArray(s.extras) ? s.extras : []).forEach(e => { const t = tidy(typeof e === 'string' ? e : e && e.text), w = e && typeof e === 'object' && typeof e.where === 'string' && e.where.trim() || null;
+        if (t && !ideas.some(x => x.place === s.place && x.text.toLowerCase() === t.toLowerCase())) ideas.push({ place: s.place, text: t, where: w }); });
       lines.forEach((d, k) => days.push({ plan: d.join(' · ') || null, notes: k === 0 && s.why ? tidy(s.why) : null, auto: d.length > 0 }));
     });
     if (days.length) { const last = days[days.length - 1]; last.plan = (last.plan ? last.plan + ' · ' : '') + 'Last night'; last.auto = true; }

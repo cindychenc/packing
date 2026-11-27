@@ -23,6 +23,8 @@ Rules:
 - title: under 7 words, the thing itself ("Laguna de los Tres hike", "Mercado Central lunch"). No hotels.
 - note: under 12 words, one concrete fact that helps decide or plan (best time, how to get there, booking). No adjectives like "stunning".
 - len: how long it takes, short ("2 h", "Half day", "Evening").
+- where: the one specific place it happens at, as it's named on a map ("Lago di Misurina", "Mercado Central"), so the app can
+  pin it. Empty when there's no single place.
 - If a month is given, only suggest what works then.
 - Don't repeat anything in "Already have".
 - For "for you" lists: each idea must fit one of the listed interests; put that interest, copied exactly, in "because".
@@ -32,7 +34,7 @@ const TOOL = {
   name: 'ideas', description: 'Return the ideas.',
   input_schema: { type: 'object', required: ['ideas'], properties: { ideas: { type: 'array', minItems: 1, maxItems: 5, items: {
     type: 'object', required: ['title', 'note', 'len'], properties: {
-      title: { type: 'string' }, note: { type: 'string' }, len: { type: 'string' },
+      title: { type: 'string' }, note: { type: 'string' }, len: { type: 'string' }, where: { type: 'string' },
       because: { type: 'string', description: 'For "for you" lists: the interest it fits, copied exactly from the list.' } } } } } },
 };
 
@@ -86,7 +88,7 @@ Deno.serve(async (req) => {
   // The reason must be one of the traveller's own interests; anything else is dropped.
   const ideas = (Array.isArray(raw) ? raw : []).slice(0, 5).map((x: any) => {
     const because = one(x?.because, 40).toLowerCase();
-    return { title: one(x?.title, 80), note: one(x?.note, 160), len: one(x?.len, 30), because: kind === 'you' && prefs.includes(because) ? because : null };
+    return { title: one(x?.title, 80), note: one(x?.note, 160), len: one(x?.len, 30), where: one(x?.where, 120) || null, because: kind === 'you' && prefs.includes(because) ? because : null };
   }).filter((x: any) => x.title);
   if (!ideas.length) return reply(502, { error: 'Couldn\'t find ideas just now. Try again in a minute.' });
   await admin.from('place_ideas').upsert({ key, items: ideas, model: MODEL });
