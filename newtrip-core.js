@@ -164,7 +164,8 @@
   // "(~6 h, one bus a day, check locally)" after a travel line: Claude's rough hours and note, and anything the road check flagged
   const legBits = s => { const b = [];
     if (s.hours > 0) b.push('~' + (s.hours < 1 ? Math.round(s.hours * 60) + ' min' : (Math.round(s.hours * 2) / 2) + ' h'));
-    if (s.leg_note) b.push(tidy(s.leg_note).replace(/\.$/, ''));
+    const note = tidy(s.leg_note || '').replace(/\.$/, '');
+    if (note && note.split(/\s+/).length <= 8 && !/\b(by|from|to)\b.*\b(train|bus|railway|ferry|flight|car)\b|\b\d+(\.\d+)?\s*(h|hrs?|hours?)\b/i.test(note)) b.push(note);   // drop a note that retells the route
     if (s.leg_flag && !/check locally/i.test(s.leg_note || '')) b.push('check locally');
     return b.length ? ' (' + b.join(', ') + ')' : ''; };
   const MULTI = /(?:,\s*|\s+|\()(\d{1,2})[- ]days?\b\)?|\b(\d{1,2})-day\b/i;
@@ -211,6 +212,8 @@
         if (isStep(t)) lines[Math.min(k, n - 1)].push(t);   // the plans are one per night, in order: a step stays on its night
         else ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, '') });
       });
+      // the stop's extras are ideas too (so a stop whose plans all became fixed days still has some)
+      (Array.isArray(s.extras) ? s.extras : []).map(tidy).forEach(t => { if (t && !ideas.some(x => x.place === s.place && x.text.toLowerCase() === t.toLowerCase())) ideas.push({ place: s.place, text: t }); });
       lines.forEach((d, k) => days.push({ plan: d.join(' · ') || null, notes: k === 0 && s.why ? tidy(s.why) : null, auto: d.length > 0 }));
     });
     if (days.length) { const last = days[days.length - 1]; last.plan = (last.plan ? last.plan + ' · ' : '') + 'Last night'; last.auto = true; }

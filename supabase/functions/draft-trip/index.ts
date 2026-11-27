@@ -108,8 +108,11 @@ Deno.serve(async (req) => {
         if (st.next && !MODES.includes(st.next)) st.next = 'bus';
         if (ask.noFly && st.next === 'fly') { st.next = 'bus'; st.leg_note = 'check locally'; }   // they asked for no flights
         st.hours = Number.isFinite(+st.hours) && +st.hours > 0 ? Math.round(+st.hours * 2) / 2 : null;
-        st.leg_note = typeof st.leg_note === 'string' && st.leg_note.trim() ? st.leg_note.trim().slice(0, 60) : null;
+        // a note is for something to plan around ("one bus a day"); a long one that retells the route is dropped
+        st.leg_note = typeof st.leg_note === 'string' && st.leg_note.trim() ? st.leg_note.trim().replace(/\.$/, '') : null;
+        if (st.leg_note && (st.leg_note.split(/\s+/).length > 8 || /\b(by|from|to)\b.*\b(train|bus|railway|ferry|flight|car)\b|\b\d+(\.\d+)?\s*(h|hrs?|hours?)\b/i.test(st.leg_note))) st.leg_note = null;
         st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
+        st.extras = (Array.isArray(st.extras) ? st.extras : []).map((x: unknown) => String(x ?? '').trim().slice(0, 120)).filter(Boolean).slice(0, 4);
         st.rest = st.rest === true;
         if (!(Math.abs(+st.lat) <= 90 && Math.abs(+st.lng) <= 180)) { delete st.lat; delete st.lng; }
       });

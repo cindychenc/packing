@@ -231,6 +231,10 @@ Long trips (only when the message says "long trip"):
   ("Day hike to Laguna Torre", "Old town and the Registan", "Rest day, hot springs"). Put the route's highlights on the right days.
   A trek stop takes one line per day, numbered in order, with that day's stretch ("GR20 day 1: Calenzana to Ortu di u Piobbu",
   "GR20 day 2: Ortu to Carrozzu"). Don't mention the journey in; the app adds it.
+- For each stop (not a trek stop), also give 3 more things to do there ("extras"), different from its plans, in the same
+  short form. They're offered as ideas for the free days.
+- A leg's note is only for something the traveller must plan around, under 6 words; leave it out otherwise.
+  Don't restate the route, the mode or the hours in it.
 - For each stop, write one sentence (at most 20 words) to the traveller on why it's in the trip.
   Example: "Base for the W Trek; buses to the park leave at 7 am."
 
@@ -288,10 +292,12 @@ export const STOPS_TOOL = {
                   why: { type: 'string', description: 'One sentence, at most 20 words.' },
                   next: { type: 'string', enum: MODES, description: 'How to get to the next stop. Leave out on the last stop of the route.' },
                   hours: { type: 'number', description: 'Rough door-to-door hours to the next stop.' },
-                  leg_note: { type: 'string', description: 'Under 8 words, only when it matters: how often it runs, seasonal, border crossing, overnight, "check locally".' },
+                  leg_note: { type: 'string', description: 'Under 6 words, only when it matters: how often it runs, seasonal, border crossing, overnight, "check locally". Never the route, mode or hours.' },
                   rest: { type: 'boolean', description: 'True for a rest stop on a long trip (a longer, easy stay in a bigger city or comfortable base).' },
                   plans: { type: 'array', items: { type: 'string' },
                     description: 'One short line per night at this stop, in order: what to do that day, under 8 words. The app adds the journey in, so the first line is about the place.' },
+                  extras: { type: 'array', items: { type: 'string' }, maxItems: 4,
+                    description: '3 more things to do at this stop, under 8 words each, not in plans. Left out for a trek stop.' },
                 },
               },
             },

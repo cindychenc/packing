@@ -828,11 +828,16 @@
         if (error) { fail(errText(error)); return; }
         // what they said they like, for "For you" ideas later (needs migration 006; skipped before it)
         const ask = NT.request(st.ans, ctx()), prefs = { loves: ask.loves || [], fitness: ask.fitness || null, who: ask.who || null, pace: ask.pace || null, transport: ask.transport, noFly: ask.noFly };
-        if (prefs.loves.length || prefs.fitness || prefs.transport || prefs.noFly) sb.from('trips').update({ prefs }).eq('id', data.id).then(x => { if (x && x.error) console.warn('preferences not saved', x.error.message); });
+        // Saved after the plan: apply_layout checks the trip hasn't changed since it was made, and this update would change it.
+        // Awaited, so the planner then loads the trip as it now stands.
+        const savePrefs = async () => { if (!(prefs.loves.length || prefs.fitness || prefs.transport || prefs.noFly)) return;
+          const x = await sb.from('trips').update({ prefs }).eq('id', data.id); if (x && x.error) console.warn('preferences not saved', x.error.message); };
+        if (!layout) await savePrefs();
         if (layout) {
           const rows = LAYOUT.toRows(layout);
           const r = await sb.rpc('apply_layout', { p_trip: data.id, p_expect: data.updated_at, p_phases: rows.phases, p_days: rows.days });
           if (r.error) { fail('The trip was made, but its plan couldn\'t be saved: ' + errText(r.error)); return; }
+          await savePrefs();
           const seen = {};
           const places = stops.filter(s => s.lat != null && !seen[s.place] && (seen[s.place] = 1))
             .map(s => ({ trip_id: data.id, name: s.place, lat: s.lat, lng: s.lng, country: s.country || null, found_as: s.label || null }));

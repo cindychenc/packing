@@ -92,6 +92,7 @@
         data = [];
         for (const r of rows.filter(match)) {
           const next = Object.assign({}, r, q.payload, { __patch: q.payload });
+          if (table === 'trips') next.updated_at = new Date(Math.max(Date.now(), Date.parse(r.updated_at || 0) + 1)).toISOString();   // like the database's trigger
           const err = beforeUpdate(table, r, next);
           if (err) { error = err; data = null; break; }
           Object.assign(r, q.payload, { end_date: next.end_date, updated_at: now() });

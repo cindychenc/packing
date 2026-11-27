@@ -101,6 +101,14 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
   ok(r.days.every(d => d.auto === !!d.plan) && r.days[2].notes === 'Base for Torres.', 'filled days are marked auto; why stays in notes');
   ok(eq(r.ideas.map(x => x.place + ': ' + x.text), ['Santiago: Cerro San Cristóbal funicular', 'Puerto Natales: Milodon Cave', 'Puerto Natales: Walk the Puerto Natales waterfront']), 'ideas: ' + JSON.stringify(r.ideas));
 }
+// a stop's extras become ideas, so a stop whose plans all became fixed days still has some; a note that retells the route is dropped
+{
+  const r = T.crucialPlans([{ stops: [
+    { place: 'Taipei', nights: 1, next: 'train', hours: 1.5, leg_note: 'Taipei to Yilan by Taiwan Railway, about 1.5 hours', plans: ['Old town'], extras: ['Night market'] },
+    { place: 'Yilan', nights: 2, plans: ['Hot springs and farm villages'], extras: ['Luodong night market', 'Jiaoxi hot springs', 'Hot springs and farm villages'] }] }], []);
+  ok(r.days[1].plan === 'Train from Taipei (~1.5 h)', 'note retelling the route dropped: ' + r.days[1].plan);
+  ok(eq(r.ideas.filter(x => x.place === 'Yilan').map(x => x.text), ['Hot springs and farm villages', 'Luodong night market', 'Jiaoxi hot springs']), 'extras are ideas, not repeating a plan: ' + JSON.stringify(r.ideas));
+}
 // a travel line carries the leg's rough hours, Claude's note, and "check locally" when the road check flagged it
 {
   const r = T.crucialPlans([{ stops: [
