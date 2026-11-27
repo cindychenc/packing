@@ -111,6 +111,14 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
   ok(eq(r2.ideas.map(x => [x.text, x.where]), [['Lake Misurina easy walk', 'Lago di Misurina'], ['Town walk', null], ['Lagazuoi tunnels', 'Rifugio Lagazuoi'], ['Old string extra', null]]), 'ideas keep where they are: ' + JSON.stringify(r2.ideas));
   ok(eq(r.ideas.filter(x => x.place === 'Yilan').map(x => x.text), ['Hot springs and farm villages', 'Luodong night market', 'Jiaoxi hot springs']), 'extras are ideas, not repeating a plan: ' + JSON.stringify(r.ideas));
 }
+// bookings and logistics are prefilled on their night; a place visited twice keeps each visit's ideas apart
+{
+  const r = T.crucialPlans([{ stops: [{ place: 'Milan', nights: 2, next: 'drive', plans: ['Duomo rooftops', 'Collect rental car, drive north'], extras: ['Brera walk'] }] },
+    { stops: [{ place: 'Como', nights: 1, next: 'drive', plans: ['Lake ferry'] }] },
+    { stops: [{ place: 'Milan', nights: 2, plans: ['Last Supper viewing if booked', 'Return the car'], extras: ['Navigli canals', 'Pick up tickets for La Scala'] }] }], []);
+  ok(eq(r.days.map(d => d.plan), ['Arrive in Milan', 'Collect rental car, drive north', 'Drive from Milan', 'Drive from Como · Last Supper viewing if booked', 'Return the car · Last night']), 'logistics prefilled: ' + JSON.stringify(r.days.map(d => d.plan)));
+  ok(eq(r.ideas.map(x => [x.text, x.phase, x.visit]), [['Duomo rooftops', 0, 1], ['Brera walk', 0, 1], ['Lake ferry', 1, 1], ['Navigli canals', 2, 2]]), 'ideas know their phase and visit: ' + JSON.stringify(r.ideas));
+}
 // a travel line carries the leg's rough hours, Claude's note, and "check locally" when the road check flagged it
 {
   const r = T.crucialPlans([{ stops: [

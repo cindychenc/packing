@@ -9,3 +9,7 @@ alter table public.stop_ideas add column if not exists where_name text check (wh
 alter table public.stop_ideas add column if not exists lat double precision check (lat is null or lat between -90 and 90);
 alter table public.stop_ideas add column if not exists lng double precision check (lng is null or lng between -180 and 180);
 alter table public.stop_ideas add column if not exists geo_tried boolean not null default false;
+
+-- Which phase an idea belongs to, so a place visited twice (Milan at the start and the end) keeps its own ideas.
+-- No foreign key: if the phase is later merged or deleted, the idea falls back to showing for every visit to the place.
+alter table public.stop_ideas add column if not exists phase_id uuid;

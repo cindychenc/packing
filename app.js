@@ -846,9 +846,10 @@
           // Both need migration 005; before it they're skipped with a warning and the trip still works.
           const autoIds = layout.phases.flatMap(p => p.days).filter(d => d.auto).map(d => d.id);
           if (autoIds.length) await sb.from('days').update({ plan_auto: true }).in('id', autoIds).then(x => { if (x && x.error) console.warn('prefilled marks not saved', x.error.message); });
-          const ideas = (o.route && o.route.ideas || []).slice(0, 400).map((x, i) => ({ trip_id: data.id, place: x.place, text: x.text.slice(0, 300), source: 'route', sort: i, where_name: x.where ? x.where.slice(0, 120) : null }));
+          const ideas = (o.route && o.route.ideas || []).slice(0, 400).map((x, i) => ({ trip_id: data.id, place: x.place, text: x.text.slice(0, 300), source: 'route', sort: i, where_name: x.where ? x.where.slice(0, 120) : null,
+            phase_id: x.phase != null && layout.phases[x.phase] ? layout.phases[x.phase].id : null }));
           // where_name needs migration 007; before it, the ideas are saved without it
-          if (ideas.length) sb.from('stop_ideas').insert(ideas).then(x => { if (x && x.error && /where_name/.test(x.error.message || '')) return sb.from('stop_ideas').insert(ideas.map(i => { const c = Object.assign({}, i); delete c.where_name; return c; })); return x; })
+          if (ideas.length) sb.from('stop_ideas').insert(ideas).then(x => { if (x && x.error && /where_name|phase_id/.test(x.error.message || '')) return sb.from('stop_ideas').insert(ideas.map(i => { const c = Object.assign({}, i); delete c.where_name; delete c.phase_id; return c; })); return x; })
             .then(x => { if (x && x.error) console.warn('ideas not saved', x.error.message); });
         } else {
           const one = st.picks.length === 1 && st.picks[0].kind === 'place' && st.dest.split(',').filter(x => x.trim()).length === 1 ? st.picks[0] : null;
@@ -1245,7 +1246,7 @@
             h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1))), n2));
       }
       // each empty day at a stop gets a different one of the stop's unplanned ideas to pick with one click
-      const pool = s.place ? ideasFor(s.place).filter(x => REC(x) && !planIdx(p, s).has(normIdea(x.text))) : [];
+      const pool = s.place ? ideasFor(s.place, p.id).filter(x => REC(x) && !planIdx(p, s).has(normIdea(x.text))) : [];
       let emptyN = 0;
       for (let j = s.start; j < s.start + s.n; j++) {
         const sugg = live && s.place && !p.days[j].plan && pool.length ? pool[emptyN++ % pool.length] : null;
@@ -1323,7 +1324,9 @@
 
   /* Ideas for a stop: the route's other suggestions (stop_ideas), by place. A day's plan can hold several, joined with " · ". */
   const normIdea = t => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  const ideasFor = place => (tripData.ideas || []).filter(x => x.place === place);
+  // a stop's ideas: its place, and its phase when the idea has one that still exists (a place visited twice keeps them apart)
+  const ideasFor = (place, phaseId) => { const live = new Set((tripData.phases || []).map(p => p.id));
+    return (tripData.ideas || []).filter(x => x.place === place && (!phaseId || !x.phase_id || x.phase_id === phaseId || !live.has(x.phase_id))); };
   const planParts = t => String(t || '').split(' · ').map(normIdea).filter(Boolean);
   const planIdx = (p, s) => { const set = new Set(); for (let j = s.start; j < s.start + s.n; j++) planParts(p.days[j].plan).forEach(x => set.add(x)); return set; };
   // "Grey Glacier boat — best on a clear morning (½ day)" → a title, a note and how long it takes
@@ -1461,7 +1464,7 @@
     const k = S.s.place + '|' + cat; if (moreBusy[k]) return;
     moreBusy[k] = true; delete moreErr[k]; paintSel();
     const at = placeAt()[S.s.place] || {}, d0 = LAYOUT.dateAt(tripData.trip.start_date, S.st + S.s.start);
-    const have = ideasFor(S.s.place).map(x => x.text);
+    const have = ideasFor(S.s.place, S.p.id).map(x => x.text);
     const { data, error } = await sb.functions.invoke('stop-ideas', { body: { kind: cat, place: S.s.place, country: at.country || '', month: d0 ? +d0.slice(5, 7) - 1 : null, prefs: cat === 'you' ? prefLabels() : [], have } });
     delete moreBusy[k];
     if (error || !data || !Array.isArray(data.ideas)) {
@@ -1471,10 +1474,10 @@
     }
     const seen = new Set(have.map(normIdea));
     const rows = data.ideas.filter(x => x && x.title && !seen.has(normIdea(x.title)) && seen.add(normIdea(x.title))).map((x, i) => ({ trip_id: tripData.trip.id, place: S.s.place, text: x.title.slice(0, 300),
-      note: x.note ? x.note.slice(0, 300) : null, len: x.len ? x.len.slice(0, 40) : null, reason: x.because ? ('You like ' + x.because).slice(0, 80) : null, source: cat, sort: 1000 + i, where_name: x.where ? String(x.where).slice(0, 120) : null }));
+      note: x.note ? x.note.slice(0, 300) : null, len: x.len ? x.len.slice(0, 40) : null, reason: x.because ? ('You like ' + x.because).slice(0, 80) : null, source: cat, sort: 1000 + i, where_name: x.where ? String(x.where).slice(0, 120) : null, phase_id: S.p.id }));
     if (rows.length) {
       let ins = await sb.from('stop_ideas').insert(rows).select();
-      if (ins.error && /where_name/.test(ins.error.message || '')) ins = await sb.from('stop_ideas').insert(rows.map(x => { const c = Object.assign({}, x); delete c.where_name; return c; })).select();   // before migration 007
+      if (ins.error && /where_name|phase_id/.test(ins.error.message || '')) ins = await sb.from('stop_ideas').insert(rows.map(x => { const c = Object.assign({}, x); delete c.where_name; delete c.phase_id; return c; })).select();   // before migration 007
       if (ins.error) { console.warn('ideas not saved', ins.error.message); rows.forEach((x, i) => { x.id = 'tmp-' + cat + '-' + Date.now() + '-' + i; }); }   // still shown this time
       (tripData.ideas = tripData.ideas || []).push(...(ins.error ? rows : ins.data));
     } else moreErr[k] = 'Nothing new turned up for ' + S.s.place + '.';
@@ -1502,7 +1505,7 @@
 
   function paintSel() {
     if (!pmap.card || !pmap.card.isConnected) return;
-    const S = selInfo(), all = S ? ideasFor(S.s.place) : [];
+    const S = selInfo(), all = S ? ideasFor(S.s.place, S.p.id) : [];
     const rec = all.filter(REC).slice(0, 6), cats = S ? ['you', 'top'] : [];
     if (S) setTimeout(() => placeIdeas(S.s.place), 0);
     if (selCat && !cats.includes(selCat)) selCat = null;

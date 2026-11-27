@@ -233,6 +233,9 @@ Long trips (only when the message says "long trip"):
   ("Day hike to Laguna Torre", "Old town and the Registan", "Rest day, hot springs"). Put the route's highlights on the right days.
   A trek stop takes one line per day, numbered in order, with that day's stretch ("GR20 day 1: Calenzana to Ortu di u Piobbu",
   "GR20 day 2: Ortu to Carrozzu"). Don't mention the journey in; the app adds it.
+- Bookings and logistics that happen on a set day (picking up or dropping off the rental car, a timed ticket like the
+  Last Supper, a flight) go in that exact day's plan line, never in extras. A place visited twice (the start and the end of a
+  loop) gets plans and extras that fit that visit: arrival things at the start, last-day things at the end.
 - For each stop (not a trek stop), also give 3 more things to do there ("extras"), different from its plans, in the same
   short form. They're offered as ideas for the free days.
 - For each plan line and each extra, name the one specific place it happens at, as it's called on a map ("Lago di Misurina",

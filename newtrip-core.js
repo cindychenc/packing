@@ -170,7 +170,11 @@
     return b.length ? ' (' + b.join(', ') + ')' : ''; };
   const MULTI = /(?:,\s*|\s+|\()(\d{1,2})[- ]days?\b\)?|\b(\d{1,2})-day\b/i;
   function crucialPlans(phases, highlights) {
-    const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => stops.push(s)));
+    const stops = [], phaseOf = [], nth = [];   // each stop's phase, and which visit to its place it is (Milan at the start vs the end)
+    const seenAt = {};
+    (phases || []).forEach((p, pi) => (p.stops || []).forEach(s => { stops.push(s); phaseOf.push(pi); const k = String(s.place || '').toLowerCase(); nth.push(seenAt[k] = (seenAt[k] || 0) + 1); }));
+    // Bookings and logistics happen on a set day (picking up the car, a timed ticket, a flight): they're prefilled, never ideas.
+    const FIXED = /\b(rental car|car rental|hire car|collect (the |your )?car|pick[- ]?up|drop[- ]?off|return (the |your )?car|check[- ]?in|check[- ]?out|flights?|airport|booked|booking|book ahead|tickets?|reservations?|timed entry)\b/i;
     const norm = t => String(t || '').toLowerCase();
     // Lines that are steps of one multi-day thing ("GR20 day 1", "GR20 day 3", "Stage 2: Ortu to Petra Piana", "Inca Trail 2 of 4")
     // are fixed too: they go on their own day, in order, instead of becoming ideas. A step needs a number and either
@@ -208,14 +212,15 @@
       plansIn.forEach((t, k) => {
         if (!t) return;
         if (stepsHere && isStep(t)) { lines[Math.min(k, n - 1)].push(t); return; }
+        if (FIXED.test(t) && !/^(arrive|fly|bus|drive|train|ferry|travel|last night)\b/i.test(t)) { lines[Math.min(k, n - 1)].push(t); return; }   // on its own night
         const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(travel).some(u => w.some(x => norm(u).indexOf(x) >= 0));
         if (dup || /^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) return;
         if (isStep(t)) lines[Math.min(k, n - 1)].push(t);   // the plans are one per night, in order: a step stays on its night
-        else ideas.push({ place: s.place, text: t.replace(/^spare day:\s*/i, ''), where: whereAt(k) });
+        else ideas.push({ place: s.place, phase: phaseOf[i], visit: nth[i], text: t.replace(/^spare day:\s*/i, ''), where: whereAt(k) });
       });
       // the stop's extras are ideas too (so a stop whose plans all became fixed days still has some)
       (Array.isArray(s.extras) ? s.extras : []).forEach(e => { const t = tidy(typeof e === 'string' ? e : e && e.text), w = e && typeof e === 'object' && typeof e.where === 'string' && e.where.trim() || null;
-        if (t && !ideas.some(x => x.place === s.place && x.text.toLowerCase() === t.toLowerCase())) ideas.push({ place: s.place, text: t, where: w }); });
+        if (t && !FIXED.test(t) && !ideas.some(x => x.place === s.place && x.phase === phaseOf[i] && x.text.toLowerCase() === t.toLowerCase())) ideas.push({ place: s.place, phase: phaseOf[i], visit: nth[i], text: t, where: w }); });
       lines.forEach((d, k) => days.push({ plan: d.join(' · ') || null, notes: k === 0 && s.why ? tidy(s.why) : null, auto: d.length > 0 }));
     });
     if (days.length) { const last = days[days.length - 1]; last.plan = (last.plan ? last.plan + ' · ' : '') + 'Last night'; last.auto = true; }
