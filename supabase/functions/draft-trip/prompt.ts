@@ -82,7 +82,9 @@ Routes:
 - Give each phase a number of days. In each route, the days of all phases must add up to exactly the trip length.
   Before answering, add them up.
 - Order phases along a realistic route with no backtracking unless there's no other way.
-- Respect what they love, what they must do, and what they'd rather avoid. If they give a start or end point, use it.
+- Respect what they love, what they must do, and what they'd rather avoid.
+- A start point is where the trip begins: it's the first stop of the first phase (at least one night), not just an airport
+  to leave right away. An end point is the last stop of the last phase, the same way. A loop with a start point ends back there.
 - Loop or open-jaw: follow the route shape if they give one. If not, prefer open-jaw (in at one end, out of the other) when there's
   a well-served airport near the far end: less backtracking, usually cheaper overall. Loop back when the region is compact
   or the only good airport is where they started. When it's a close call, make at least one of the three routes the other kind.
@@ -253,6 +255,8 @@ export function stopsMessage(r: Ask, route: any): string {
     `Route: ${route.name}. ${route.pitch ?? ''}`,
     'Phases, in order:', ...phases,
     ...(hl.length ? [`Highlights to include as stops: ${hl.join('; ')}`] : []),
+    ...(r.from ? [`The route's first stop is the start point, ${r.from}, with at least one night.`] : []),
+    ...(r.to || (r.from && (route.shape === 'loop' || r.shape === 'loop')) ? [`The route's last stop is the end point, ${r.to || r.from}, with at least one night.`] : []),
     '', NOTE].join('\n');
 }
 

@@ -161,6 +161,30 @@ Deno.serve(async (req) => {
       if (!grew && cap === Infinity) break;
     }
   }));
+  // Their start and end points are the first and last stops. If Claude jumped straight past one (treating it as just an
+  // airport), it's put in with one night, taken from the longest stay in that phase, so the totals stay the same.
+  const key = (t: string) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',')[0].replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const same = (a: string, b: string) => { const x = key(a), y = key(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+  const road = ask.transport === 'car' ? 'drive' : ask.transport === 'public' ? 'train' : null;
+  const endAt = ask.to || (ask.from && (ask.shape === 'loop') ? ask.from : null);
+  filled.forEach((phases: any[], i: number) => {
+    const ph = phases.filter((p: any) => p.stops.length); if (!ph.length) return;
+    const take = (p: any) => { const big = p.stops.reduce((m: any, s: any) => (s.nights > (m ? m.nights : 1) ? s : m), null); if (!big) return false;
+      big.nights--; big.plans = big.plans.slice(0, big.nights); return true; };
+    const first = ph[0], last = ph[ph.length - 1];
+    const loop = endAt && ask.from && same(endAt, ask.from) || routes[i].shape === 'loop';
+    if (ask.from && !same(first.stops[0].place, ask.from) && take(first)) {
+      first.stops.unshift({ place: ask.from, nights: 1, next: road, country: first.stops[0].country, plans: ['Arrive, settle in'], extras: [], why: 'Where the trip starts.', added: true });
+      console.warn('added start', routes[i].name, ask.from);
+    }
+    const end = endAt || (loop && ask.from) || null;
+    const lastStop = last.stops[last.stops.length - 1];
+    if (end && !same(lastStop.place, end) && take(last)) {
+      lastStop.next = lastStop.next || road;
+      last.stops.push({ place: end, nights: 1, country: lastStop.country, plans: ['Last night'], extras: [], why: 'Where the trip ends.', added: true });
+      console.warn('added end', routes[i].name, end);
+    }
+  });
   // A phase can come back with no stops (a cut-off or skipped answer); it's dropped, and its days go missing.
   // Keep a route only if it still covers most of the trip, so a short one never replaces a good one.
   const ready: any[] = [];
