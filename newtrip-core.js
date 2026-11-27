@@ -213,7 +213,9 @@
         if (!t) return;
         if (stepsHere && isStep(t)) { lines[Math.min(k, n - 1)].push(t); return; }
         if (FIXED.test(t) && !/^(arrive|fly|bus|drive|train|ferry|travel|last night)\b/i.test(t)) { lines[Math.min(k, n - 1)].push(t); return; }   // on its own night
-        const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0)), dup = used.concat(travel).some(u => w.some(x => norm(u).indexOf(x) >= 0));
+        // a repeat of a highlight or the travel line: most of its words are in one of them (one shared word like "Dolomites" isn't enough)
+        const w = norm(t).split(/[^a-zà-ÿ]+/).filter(x => x.length >= 4 && norm(s.place).indexOf(x) < 0 && (!prev || norm(prev.place).indexOf(x) < 0));
+        const dup = w.length > 0 && used.concat(travel).some(u => { const hit = w.filter(x => norm(u).indexOf(x) >= 0).length; return hit >= Math.max(2, Math.ceil(w.length * 0.6)) || (w.length === 1 && hit === 1); });
         if (dup || /^(arrive|fly|bus|drive|train|ferry|travel|spare day|last night)\b/i.test(t)) return;
         if (isStep(t)) lines[Math.min(k, n - 1)].push(t);   // the plans are one per night, in order: a step stays on its night
         else ideas.push({ place: s.place, phase: phaseOf[i], visit: nth[i], text: t.replace(/^spare day:\s*/i, ''), where: whereAt(k) });

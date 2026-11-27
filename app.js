@@ -1246,7 +1246,8 @@
             h('span', { class: 'muted f-range' }, fmt.span(st + s.start, st + s.start + s.n - 1))), n2));
       }
       // each empty day at a stop gets a different one of the stop's unplanned ideas to pick with one click
-      const pool = s.place ? ideasFor(s.place, p.id).filter(x => REC(x) && !planIdx(p, s).has(normIdea(x.text))) : [];
+      const mineI = s.place ? ideasFor(s.place, p.id) : [], recI = mineI.filter(REC);
+      const pool = (recI.length ? recI : mineI.filter(x => x.source === 'top')).filter(x => !planIdx(p, s).has(normIdea(x.text)));   // Top visited stands in when the route gave none
       let emptyN = 0;
       for (let j = s.start; j < s.start + s.n; j++) {
         const sugg = live && s.place && !p.days[j].plan && pool.length ? pool[emptyN++ % pool.length] : null;
@@ -1525,7 +1526,9 @@
           status: here ? 'In ' + dn : other.length ? 'Planned on ' + other.join(', ') : '' }, parts);
       };
       rows = rec.map((x, k) => row(x, k, true));
-      const more = selCat ? all.filter(x => x.source === selCat).map((x, k) => row(x, k, false)) : [];
+      // no ideas from the route for this stop: Top visited stands in (fetched once, shared by place, then kept with the trip)
+      const fill = !rows.length && !selCat ? 'top' : null;
+      const more = selCat || fill ? all.filter(x => x.source === (selCat || fill)).map((x, k) => row(x, k, false)) : [];
       pmap.morePins = more;   // an open Find more list pins its ideas too
       const add = x => { const cur = tripData.days.find(d => d.id === day.id) || day; if (planParts(cur.plan).includes(normIdea(x.text))) return;   // a double click adds it once
         setDayPlan(day.id, cur.plan ? cur.plan + ' · ' + x.text : x.text); };
@@ -1555,12 +1558,19 @@
           ...list(more),
           busy || (!more.length && !err) ? h('p', { class: 'pmi-why muted', role: 'status' }, 'Finding ideas…') : null,
           err ? h('p', { class: 'pmi-why', role: 'alert' }, err + ' ', h('button', { class: 'pmi-back', onclick: () => { delete moreErr[k]; findMore(S, selCat); } }, 'Try again')) : null];
-      } else kids = [h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), 'Ideas for ' + dn + ' · ' + S.s.place),
-        rows.length ? h('div', { class: 'pmi-sec' }, 'Recommended ', h('span', null, 'from your route')) : null, ...list(rows),
-        h('div', { class: 'pmi-sec' }, rows.length ? 'Find more' : 'Find ideas'),
+      } else {
+        const fk = S.s.place + '|top', fBusy = fill && moreBusy[fk], fErr = fill && moreErr[fk];
+        if (fill && !more.length && !fBusy && !fErr) setTimeout(() => findMore(S, 'top'), 0);
+        kids = [h('div', { class: 'pmi-h' }, h('span', { class: 'f-sgi', 'aria-hidden': 'true' }, '✦'), 'Ideas for ' + dn + ' · ' + S.s.place),
+        rows.length ? h('div', { class: 'pmi-sec' }, 'Recommended ', h('span', null, 'from your route')) : h('div', { class: 'pmi-sec' }, 'Recommended ', h('span', null, 'most visited here')),
+        ...list(rows.length ? rows : more),
+        !rows.length && (fBusy || (!more.length && !fErr)) ? h('p', { class: 'pmi-why muted', role: 'status' }, 'Finding ideas…') : null,
+        !rows.length && fErr ? h('p', { class: 'pmi-why', role: 'alert' }, fErr + ' ', h('button', { class: 'pmi-back', onclick: () => { delete moreErr[fk]; findMore(S, 'top'); } }, 'Try again')) : null,
+        h('div', { class: 'pmi-sec' }, 'Find more'),
         h('div', { class: 'pmi-cards' }, ...cats.map(c => h('button', { class: 'pmi-card ' + c, title: c === 'you' ? 'From what you said you like: ' + prefLabels().join(', ') : '',
           onclick: () => { selCat = c; selIdea = null; paintSel(); } }, h('span', { class: 'pmi-ci', 'aria-hidden': 'true' }, CATS[c].icon), h('b', null, CATS[c].label),
           h('span', null, c === 'you' && !prefLabels().length ? 'Tell us what you like' : CATS[c].sub))))];
+      }
       pmap.card.replaceChildren(...kids.filter(Boolean));   // replaceChildren would print a null
       pmap.card.setAttribute('aria-label', 'Ideas for ' + dn + ' in ' + S.s.place);
       pmap.card.classList.remove('hidden');

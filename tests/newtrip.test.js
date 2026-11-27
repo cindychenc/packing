@@ -119,6 +119,12 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
   ok(eq(r.days.map(d => d.plan), ['Arrive in Milan', 'Collect rental car, drive north', 'Drive from Milan', 'Drive from Como · Last Supper viewing if booked', 'Return the car · Last night']), 'logistics prefilled: ' + JSON.stringify(r.days.map(d => d.plan)));
   ok(eq(r.ideas.map(x => [x.text, x.phase, x.visit]), [['Duomo rooftops', 0, 1], ['Brera walk', 0, 1], ['Lake ferry', 1, 1], ['Navigli canals', 2, 2]]), 'ideas know their phase and visit: ' + JSON.stringify(r.ideas));
 }
+// sharing one word with a highlight doesn't make a line a repeat
+{
+  const r = T.crucialPlans([{ stops: [{ place: 'Cortina', nights: 3, plans: ['Old town', 'Dolomite valley walk to Lago di Sorapis', 'Cinque Torri war sites'] }] }],
+    [{ text: 'Long stays in the Dolomite valleys', place: 'Cortina' }, { text: 'Cinque Torri open-air museum', place: 'Cortina' }]);
+  ok(eq(r.ideas.map(x => x.text), ['Old town', 'Dolomite valley walk to Lago di Sorapis']), 'one shared word is not a repeat, most words are: ' + JSON.stringify(r.ideas));
+}
 // a travel line carries the leg's rough hours, Claude's note, and "check locally" when the road check flagged it
 {
   const r = T.crucialPlans([{ stops: [

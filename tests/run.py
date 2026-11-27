@@ -450,12 +450,22 @@ try:
         page.click('.pmi-back')
         page.click('.pmap-z'); page.wait_for_timeout(100)
         ok(not page.is_visible('.pmi') and not page.query_selector('.f-row.sel'), 'whole phase clears the day')
+        # a stop the route gave no ideas: Top visited stands in, and its empty days suggest from it
+        db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
+        have = {x['place'] for x in db['stop_ideas'] if x['source'] == 'route'}
+        ec = page.evaluate('''() => { const out = []; let on = false; for (const el of document.querySelectorAll('.pcard.live .flow > *')) {
+          if (el.classList.contains('f-stop')) on = el.textContent.includes('El Chaltén'); else if (on && el.dataset.day) out.push(el.dataset.day); } return out; }''')
+        if 'El Chaltén' not in have and ec:
+            page.click(f'.f-row[data-day="{ec[-1]}"] .f-in'); page.wait_for_selector('.pmi-r:has-text("Mirador Dorotea hike")')
+            ok('most visited here' in page.inner_text('.pmi').lower(), 'no route ideas: Top visited stands in')
+            page.click('.pmap-z')
+        else: ok(True, '(El Chaltén has route ideas in this run)')
         ok(sugg == '', 'no suggestion while every day at the stop is planned')
         page.fill(f'.f-row[data-day="{pn[2]}"] .f-in', ''); page.wait_for_timeout(700); page.click('.tl-ph:has-text("Central Chile")'); page.click('.tl-ph:has-text("Patagonia")')
         ok(page.inner_text(f'.f-row[data-day="{pn[2]}"] .f-sugg').startswith('✦') and 'Grey Glacier boat' in page.inner_text(f'.f-row[data-day="{pn[2]}"] .f-sugg'), 'an empty day suggests an idea not yet planned')
         page.click(f'.f-row[data-day="{pn[2]}"] .f-use'); page.wait_for_timeout(400)
         db = page.evaluate("JSON.parse(localStorage.getItem('fake:db'))")
-        ok([d for d in db['days'] if d['id'] == pn[2]][0]['plan'] == 'Grey Glacier boat' and not page.query_selector('.f-sugg'), 'use puts it on the day')
+        ok([d for d in db['days'] if d['id'] == pn[2]][0]['plan'] == 'Grey Glacier boat' and not any(page.query_selector(f'.f-row[data-day="{d}"] .f-sugg') for d in pn), 'use puts it on the day')
         page.click('a.crumb'); page.wait_for_selector('.trip-card')
 
         # 9f. import: pasted rows, then an .xlsx file
