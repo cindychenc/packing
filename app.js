@@ -1280,7 +1280,7 @@
     const out = [], add = (el, at, off) => out.push(new mb.Marker({ element: el, offset: off }).setLngLat(at).addTo(m));
     const icon = (path, cls, label) => { const el = h('span', { class: 'mdeco ' + cls, title: label, 'aria-hidden': 'true' }); el.innerHTML = '<svg viewBox="0 0 24 24" width="' + (small ? 15 : 19) + '" height="' + (small ? 15 : 19) + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>'; return el; };
     const HIKER = 'M14 4.5m-1.6 0a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0M13 8l-2.5 5 3 3v5M10.5 13L8 21M13 8l2.5 3.5 2.5.5M18.5 10L20 21M11 9l-3 1v4';   // a walker with a pole
-    const MODE_PATH = { fly: HL_ICONS.flight, bus: 'M5 17V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11M5 12h14M5 17h14M7 20v-3M17 20v-3M8 9h8', train: HL_ICONS.train, drive: HL_ICONS.drive, boat: HL_ICONS.boat, hike: HIKER };
+    const MODE_PATH = { fly: HL_ICONS.flight, train: HL_ICONS.train, boat: HL_ICONS.boat, hike: HIKER };   // no icon on bus or drive legs: they're most legs, a plain line says it
     const NAME = { fly: 'Flight', bus: 'Bus', train: 'Train', drive: 'Drive', boat: 'Boat', hike: 'Hike' };
     legs.forEach(g => {
       const path = MODE_PATH[g.mode]; if (!path || g.coords.length < 3) return;
