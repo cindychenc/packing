@@ -166,8 +166,8 @@ Deno.serve(async (req) => {
   }));
   // Their start and end points are the first and last stops. If Claude jumped straight past one (treating it as just an
   // airport), it's put in with one night, taken from the longest stay in that phase, so the totals stay the same.
-  const key = (t: string) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',')[0].replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-  const same = (a: string, b: string) => { const x = key(a), y = key(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+  const placeKey = (t: string) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(',')[0].replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const same = (a: string, b: string) => { const x = placeKey(a), y = placeKey(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
   const road = ask.transport === 'car' ? 'drive' : ask.transport === 'public' ? 'train' : null;
   const endAt = ask.to || (ask.from && (ask.shape === 'loop') ? ask.from : null);
   filled.forEach((phases: any[], i: number) => {
