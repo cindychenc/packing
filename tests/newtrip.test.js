@@ -125,6 +125,12 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
     [{ text: 'Long stays in the Dolomite valleys', place: 'Cortina' }, { text: 'Cinque Torri open-air museum', place: 'Cortina' }]);
   ok(eq(r.ideas.map(x => x.text), ['Old town', 'Dolomite valley walk to Lago di Sorapis']), 'one shared word is not a repeat, most words are: ' + JSON.stringify(r.ideas));
 }
+// a highlight at a place visited twice goes on the first visit only
+{
+  const r = T.crucialPlans([{ stops: [{ place: 'Milan', nights: 1, next: 'drive', plans: [] }, { place: 'Como', nights: 1, next: 'drive', plans: [] }, { place: 'Milan', nights: 2, plans: [] }] }],
+    [{ text: 'Duomo rooftops', place: 'Milan' }]);
+  ok(r.days.map(d => d.plan).filter(p => /Duomo/.test(p || '')).length === 1, 'highlight once: ' + JSON.stringify(r.days.map(d => d.plan)));
+}
 // a travel line carries the leg's rough hours, Claude's note, and "check locally" when the road check flagged it
 {
   const r = T.crucialPlans([{ stops: [

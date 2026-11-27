@@ -185,7 +185,7 @@
     const keyN = {}; stops.forEach(s => (Array.isArray(s.plans) ? s.plans : []).forEach(t => { if (STEP.test(t || '')) { const k = stepKey(t); if (k) keyN[k] = (keyN[k] || 0) + 1; } }));
     const isStep = t => STEP.test(t) && (/\b\d{1,2}\s*(?:of|\/)\s*\d{1,2}\b/i.test(t) || keyN[stepKey(t)] >= 2);
     const words = t => norm(t).split(/[^a-zà-ÿ]+/).filter(w => w.length >= 5);
-    const days = [], ideas = [];
+    const days = [], ideas = [], placedHl = new Set();   // each highlight goes on one stop only (Milan at the start, not again at the end)
     stops.forEach((s, i) => {
       const n = Math.max(1, s.nights || 1), prev = stops[i - 1];
       const lines = Array.from({ length: n }, () => []);
@@ -194,7 +194,8 @@
       const plansIn = (Array.isArray(s.plans) ? s.plans : []).map(tidy), stepsHere = plansIn.filter(t => t && isStep(t)).length >= 2;   // a trek stop with its days written out   // what a line mustn't repeat (the steps added below don't count)
       let next = n > 1 ? 1 : 0;                       // highlights start the day after arriving, when there is one
       const used = [];
-      (highlights || []).filter(hl => hl && !hl.skip && hl.place && norm(hl.place) === norm(s.place)).forEach(hl => {
+      (highlights || []).filter(hl => hl && !hl.skip && hl.place && norm(hl.place) === norm(s.place) && !placedHl.has(hl)).forEach(hl => {
+        placedHl.add(hl);
         const text = tidy(hl.text), m = MULTI.exec(text), len = m ? Math.min(+(m[1] || m[2]), n - next) : 1;
         if (m && len > 1 && stepsHere) return;   // the stop's own numbered days say it better than "Start X (5 days)"
         used.push(text);

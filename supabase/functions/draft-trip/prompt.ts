@@ -130,6 +130,8 @@ Lengths:
 - only: 1 sentence, at most 14 words ("Perito Moreno glacier walk, and the fewest travel days.").
 - best_for: 2–3 of the traveller's interests or must-dos, copied word for word.
 - highlight: under 8 words, noun first ("Perito Moreno glacier walk"). Trade-off: "Skips …" plus 2–4 words.
+  A highlight is one thing to do at one place, never a summary of how the trip works ("Rental car from Milan with day hikes",
+  "Long stays in the valleys" are not highlights).
 
 Good examples:
 - pitch: "One week in the Lakes District for volcano hikes and the Cochamó valley, then south for the W Trek and Fitz Roy."
