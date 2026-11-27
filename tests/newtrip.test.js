@@ -101,6 +101,16 @@ T.readXlsx(xl, async d => zlib.inflateRawSync(Buffer.from(d))).then(r => {
   ok(r.days.every(d => d.auto === !!d.plan) && r.days[2].notes === 'Base for Torres.', 'filled days are marked auto; why stays in notes');
   ok(eq(r.ideas.map(x => x.place + ': ' + x.text), ['Santiago: Cerro San Cristóbal funicular', 'Puerto Natales: Milodon Cave', 'Puerto Natales: Walk the Puerto Natales waterfront']), 'ideas: ' + JSON.stringify(r.ideas));
 }
+// a travel line carries the leg's rough hours, Claude's note, and "check locally" when the road check flagged it
+{
+  const r = T.crucialPlans([{ stops: [
+    { place: 'Coyhaique', nights: 1, next: 'bus', hours: 6, leg_note: 'One bus a day.', plans: [] },
+    { place: 'Cochrane', nights: 1, next: 'boat', hours: 0.5, leg_flag: 'no road found: may need a flight or boat', plans: [] },
+    { place: 'Villa O\'Higgins', nights: 1, plans: [] }] }], []);
+  ok(eq(r.days.map(d => d.plan), ['Arrive in Coyhaique', 'Bus from Coyhaique (~6 h, One bus a day)', "Boat from Cochrane (~30 min, check locally) · Last night"]), 'leg bits: ' + JSON.stringify(r.days.map(d => d.plan)));
+  const q = T.request({ transport: 'car', noFly: true, loves: [] }, { dest: 'Chile', days: 10 });
+  ok(q.transport === 'car' && q.noFly === true && T.request({ transport: 'boat' }, { dest: 'x', days: 3 }).transport === null, 'getting around goes to draft-trip');
+}
 // the steps of a multi-day thing stay on their days, in order, and aren't ideas
 {
   const r = T.crucialPlans([{ stops: [

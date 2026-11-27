@@ -41,6 +41,7 @@ Deno.serve(async (req) => {
     who: one(body.who), loves: many(body.loves), pace: one(body.pace), when: one(body.when),
     from: one(body.from), to: one(body.to), must: many(body.must, 300), avoid: one(body.avoid, 300),
     shape: body.shape === 'loop' || body.shape === 'open' ? body.shape : null, fitness: one(body.fitness),
+    transport: ['public', 'car', 'mix'].includes(body.transport) ? body.transport : null, noFly: body.noFly === true,
   };
   // "Tweak this route": the route as it is now, and the change typed in.
   let tweak: { text: string; route: Draft } | null = null;
@@ -105,6 +106,9 @@ Deno.serve(async (req) => {
       stops.forEach((st: any) => {
         st.nights = Math.max(1, Math.round(+st.nights) || 1);
         if (st.next && !MODES.includes(st.next)) st.next = 'bus';
+        if (ask.noFly && st.next === 'fly') { st.next = 'bus'; st.leg_note = 'check locally'; }   // they asked for no flights
+        st.hours = Number.isFinite(+st.hours) && +st.hours > 0 ? Math.round(+st.hours * 2) / 2 : null;
+        st.leg_note = typeof st.leg_note === 'string' && st.leg_note.trim() ? st.leg_note.trim().slice(0, 60) : null;
         st.plans = (Array.isArray(st.plans) ? st.plans : []).map((x: unknown) => String(x ?? '').slice(0, 120));
         st.rest = st.rest === true;
         if (!(Math.abs(+st.lat) <= 90 && Math.abs(+st.lng) <= 180)) { delete st.lat; delete st.lng; }

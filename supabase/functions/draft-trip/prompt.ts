@@ -31,7 +31,9 @@ export type Ask = {
   destination: string; days: number; start: string | null; who: string | null; loves: string[]; pace: string | null;
   when: string | null; from: string | null; to: string | null; must: string[]; avoid: string | null;
   shape: 'loop' | 'open' | null; fitness: string | null;
+  transport: 'public' | 'car' | 'mix' | null; noFly: boolean;
 };
+const TRANSPORT = { public: 'buses and trains (no car)', car: 'a rental car, self-driving', mix: 'a mix: buses, trains or a car, and flights for the long hops' };
 
 // Nights per stop for each pace answer; anything typed gets a middle range.
 export function nightsFor(pace: string | null): [number, number] {
@@ -54,6 +56,8 @@ function about(r: Ask): string[] {
     `Pace: ${r.pace ?? 'steadily'}`,
   ];
   if (r.fitness) lines.push(`How active: ${r.fitness}`);
+  if (r.transport) lines.push(`Getting around: ${TRANSPORT[r.transport]}`);
+  if (r.noFly) lines.push('No flights: they want to travel overland (and by boat) only');
   if (r.from) lines.push(`Start point: ${r.from}`);
   if (r.to) lines.push(`End point: ${r.to}`);
   if (r.shape === 'loop') lines.push('Route shape: back where they started (a loop)');
@@ -104,6 +108,10 @@ Highlights:
 - Give each route 3–4 highlights: what makes this route different from the other two. Name the town each one happens in ("place").
 - Tie a highlight to one of the traveller's interests or must-dos when it comes from one (the "because" field, copied word for word).
   Their pace and who's going don't count here.
+- How they get around sets the route. Buses and trains: only places public transport reaches, no stop that needs a car.
+  Rental car: remote places and scenic drives are fine; say so when a one-way drop-off or a border crossing with the car is needed.
+  A mix: fly any leg that would take more than about 10 hours over land. No flights: never fly, use buses, trains, cars and boats.
+  Not said: whatever fits the place best.
 - How active they are sets the walking: casual walks means short, easy walks; day hikes means full-day trails back to a bed;
   multi-day treks means overnight treks with gear; big adventures means hard routes, high passes or glaciers. Not said: a mix.
 - "only": one line on what only this route has, compared with the other two.
@@ -215,7 +223,10 @@ Long trips (only when the message says "long trip"):
   winter is June–August south of the equator). No high mountain hikes in deep winter, no beach days in the rainy season.
   If a day would only work in another season, plan what does work then instead.
 - For each stop, say how the traveller gets to the next stop (fly, bus, drive, train, boat, or hike when they walk there,
-  as onto a trek from its trailhead). The very last stop of the route has none.
+  as onto a trek from its trailhead), how many hours that takes door to door ("hours", a rough number), and a short note when it
+  matters ("one bus a day", "ferry Dec–Mar only", "border crossing", "overnight bus"). The very last stop of the route has none.
+  Only use a bus, train or boat that really runs between those places; if you're not sure one does, say so in the note ("check locally").
+  Keep to how they said they'd get around.
 - For each stop, give one short line per night ("plans"), in order: what to do that day, under 8 words, noun or verb first
   ("Day hike to Laguna Torre", "Old town and the Registan", "Rest day, hot springs"). Put the route's highlights on the right days.
   A trek stop takes one line per day, numbered in order, with that day's stretch ("GR20 day 1: Calenzana to Ortu di u Piobbu",
@@ -276,6 +287,8 @@ export const STOPS_TOOL = {
                   nights: { type: 'integer', minimum: 1 },
                   why: { type: 'string', description: 'One sentence, at most 20 words.' },
                   next: { type: 'string', enum: MODES, description: 'How to get to the next stop. Leave out on the last stop of the route.' },
+                  hours: { type: 'number', description: 'Rough door-to-door hours to the next stop.' },
+                  leg_note: { type: 'string', description: 'Under 8 words, only when it matters: how often it runs, seasonal, border crossing, overnight, "check locally".' },
                   rest: { type: 'boolean', description: 'True for a rest stop on a long trip (a longer, easy stay in a bigger city or comfortable base).' },
                   plans: { type: 'array', items: { type: 'string' },
                     description: 'One short line per night at this stop, in order: what to do that day, under 8 words. The app adds the journey in, so the first line is about the place.' },

@@ -326,6 +326,7 @@ try:
         page.click('.fsg:has-text("Solo")'); page.click('.fp:has-text("Outdoor adventure")'); page.click('.fmore'); page.click('.fp:has-text("Markets")'); page.click('.fmore')
         ok(page.is_visible('.fp.on:has-text("Markets")') and len(page.query_selector_all('.fsec >> nth=0 >> .fp')) == 7, 'Show less keeps a picked interest visible')
         page.click('.fc:has-text("Slow and immersive")'); page.click('.fp:has-text("Multi-day treks")')
+        page.click('.fsg:has-text("Buses & trains")'); page.check('.fchk input')
         ok(page.is_visible('.fsg.on:has-text("Solo")') and len(page.query_selector_all('.fsec >> nth=0 >> .fp.on')) == 2, 'picks show as on')
         page.click('.fxh:has-text("Start and end points")'); page.click('.fsg:has-text("End somewhere else")')
         page.click('.fin[aria-label="Starting in"]'); page.keyboard.type('Lisb'); page.wait_for_selector('.fxb .ac-i:has-text("Lisbon")')
@@ -343,7 +344,8 @@ try:
         page.wait_for_selector('.cx-tb')
         sent = page.evaluate('window.__lastInvoke')
         ok(sent['name'] == 'draft-trip' and sent['body'] == {'destination': 'Patagonia', 'days': 21, 'start': None, 'who': 'by myself', 'loves': ['outdoor adventure', 'markets'],
-           'pace': 'slowly, 3+ nights per stop', 'fitness': 'multi-day treks', 'when': 'in autumn', 'from': 'Santiago', 'to': 'Buenos Aires', 'shape': 'open', 'must': ['the W Trek'], 'avoid': None}, f'sends the answers ({sent})')
+           'pace': 'slowly, 3+ nights per stop', 'fitness': 'multi-day treks', 'when': 'in autumn', 'from': 'Santiago', 'to': 'Buenos Aires', 'shape': 'open', 'must': ['the W Trek'], 'avoid': None,
+           'transport': 'public', 'noFly': True}, f'sends the answers ({sent})')
         ok(page.evaluate("document.querySelector('.modal.newtrip').classList.contains('big')"), 'the pop-up grows for the routes')
         ok(page.inner_text('.rhdr .nt-ttl') == 'Three ways through Patagonia' and len(page.query_selector_all('.cx-c.hd')) == 3, 'three routes side by side')
         heads = [e.inner_text() for e in page.query_selector_all('.cx-rl')]

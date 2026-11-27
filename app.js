@@ -282,7 +282,7 @@
 
   function newTripModal() {
     const st = { step: 'where', dest: '', picks: [], mode: null, unit: null, months: 1, start: '', end: '', cal: null, seasons: [],
-      ans: { loves: [], who: null, pace: null, fitness: null, shape: 'any', from: '', to: '', must: '', avoid: '' }, more: false, fopen: null,
+      ans: { loves: [], who: null, pace: null, fitness: null, transport: null, noFly: false, shape: 'any', from: '', to: '', must: '', avoid: '' }, more: false, fopen: null,
       busy: false, routes: null, cur: 0, view: 'map', tw: null, twText: '', redraw: null, imp: { text: '', file: null, plan: null, msg: null } };
     modal((box, close) => {
       box.classList.add('newtrip');
@@ -489,6 +489,9 @@
           sec('Pace', h('div', { class: 'fcards' }, F.pace.map(([label, desc, v]) => h('button', { type: 'button', class: 'fc' + (a.pace === v ? ' on' : ''), 'aria-pressed': String(a.pace === v),
             onclick: () => set('pace', a.pace === v ? null : v) }, ico(FI[label], 26), h('span', null, h('b', null, label), h('span', null, desc)))))),
           sec('How active?', h('div', { class: 'fpills' }, F.fitness.map(label => { const v = label.toLowerCase(); return pill(label, FI[label], a.fitness === v, () => set('fitness', a.fitness === v ? null : v)); }))),
+          sec([h('span', null, 'Getting around'), h('span', { class: 'fsub' }, 'Pick one, or leave it')], [
+            h('div', { class: 'fseg', role: 'group', 'aria-label': 'Getting around' }, F.transport.map(([label, v]) => segBtn(label, a.transport === v, () => set('transport', a.transport === v ? null : v)))),
+            h('label', { class: 'fchk' }, h('input', { type: 'checkbox', checked: a.noFly, onchange: e => set('noFly', e.target.checked) }), 'No flights')]),
           fold('ends', 'Start and end points', ends, [
             h('div', { class: 'fxg' }, h('span', { class: 'fxl' }, 'Where it ends'), h('div', { class: 'fseg', role: 'group', 'aria-label': 'Route shape' }, F.shape.map(([v, label]) => segBtn(label, shape === v, () => set('shape', v))))),
             placeField('from', 'Starting in', 'A city, airport or border crossing'),
@@ -525,6 +528,7 @@
         const keys = Object.keys(want).slice(0, 40);
         const found = await Promise.all(keys.map(k => PLACES.lookup(want[k].place, want[k].country, { lat: want[k].lat, lng: want[k].lng })));
         const at = {}; keys.forEach((k, i) => { if (found[i]) at[k] = found[i]; });
+        await checkLegs(routes, at);
         return routes.map(r => {
           const fit = NT.fitNights(r.phases, total, NT.paceCap(st.ans.pace));
           const L = LAYOUT.fromDraft(r.phases, total).layout;
@@ -540,6 +544,52 @@
           }));
           return { r, layout: L, stops, left: fit.left, tweak: null, ideas: cp.ideas };
         });
+      }
+      /* Claude picks each leg's transport from what it knows, so the overland legs are checked against real roads (Mapbox
+         Directions, the same account as the maps): no road means it needs a flight or a boat; very long or very far legs, and a
+         border crossing on a one-night stop, are marked to check. What's found goes on the stop as leg_flag, which the
+         route table lists and the trip's travel line carries ("check locally"). Nothing here is certain, so nothing is changed. */
+      const GROUND = { bus: 1.3, drive: 1, train: 1.1 };
+      const roadCache = {};
+      async function roadHours(a, b) {
+        const k = [a.lng, a.lat, b.lng, b.lat].map(v => (+v).toFixed(3)).join(',');
+        if (!(k in roadCache)) roadCache[k] = (async () => {
+          if (window.SUITCASE_MAP_FAKE || !CFG.mapboxToken) return undefined;
+          try {
+            const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 5000);
+            const res = await fetch('https://api.mapbox.com/directions/v5/mapbox/driving/' + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=false&access_token=' + encodeURIComponent(CFG.mapboxToken), { signal: ctl.signal });
+            clearTimeout(t);
+            const j = await res.json();
+            if (j.code === 'NoRoute' || j.code === 'NoSegment') return null;   // no road between them
+            return j.routes && j.routes[0] ? j.routes[0].duration / 3600 : undefined;
+          } catch (e) { return undefined; }   // couldn't check
+        })();
+        return roadCache[k];
+      }
+      async function checkLegs(routes, at) {
+        const jobs = [];
+        routes.forEach(r => {
+          const list = []; r.phases.forEach(p => (p.stops || []).forEach(s => list.push(s)));
+          list.forEach((s, i) => {
+            const t = list[i + 1]; s.leg_flag = null; if (!t || !s.next) return; s.leg_to = t.place;
+            const a = at[s.place + '|' + (s.country || '')], b = at[t.place + '|' + (t.country || '')];
+            const ground = s.next in GROUND, crossing = (s.country || '') && (t.country || '') && s.country !== t.country;
+            const flag = m => { if (!s.leg_flag) s.leg_flag = m; };
+            if (ground && crossing && t.nights <= 1) flag('border crossing, then one night');
+            if (!a || !b || a.lat == null || b.lat == null) return;
+            const far = PLACES.km(a, b);
+            if (ground && far > 1500) flag(Math.round(far / 100) * 100 + ' km overland');
+            if (!ground) return;
+            jobs.push(roadHours(a, b).then(hrs => {
+              if (hrs === null) { s.leg_flag = 'no road found: may need a flight or boat'; return; }
+              if (hrs === undefined) return;
+              const by = hrs * GROUND[s.next];
+              if (!s.hours) s.hours = Math.round(by * 2) / 2;
+              if (by > 12) flag('about ' + Math.round(by) + ' h by ' + (s.next === 'drive' ? 'car' : s.next));
+            }));
+          });
+        });
+        await Promise.all(jobs);
       }
       // Put the day-by-day lines into a new layout's days, in order (days past the planned ones stay empty).
       function fillDays(L, lines) {
@@ -598,6 +648,9 @@
             row('Leaves out', '', x => h('span', { class: 'cx-minus' }, skips(x) || '–')),
             row('Getting around', '', x => h('span', { class: 'cx-meta' }, plural(x.stops.reduce((a, s) => a + s.n, 0), 'night') + (x.left ? ' · ' + plural(x.left, 'day') + ' to plan' : ''),
               h('br'), NT.travelText(x.stops.map(s => ({ next: s.next }))) || 'One base',
+              (() => { const fl = []; x.r.phases.forEach(p => (p.stops || []).forEach((s, i, a) => { if (s.leg_flag) fl.push(s); })); if (!fl.length) return null;
+                return h('span', { class: 'cx-chk', title: 'Checked against real roads where possible. Worth confirming locally.' }, h('br'), '⚠ ' + plural(fl.length, 'leg') + ' to check: ',
+                  fl.map(s => s.place + ' → ' + s.leg_to + ': ' + s.leg_flag).join('; ')); })(),
               h('br'), (() => { const a = x.stops[0], b = x.stops[x.stops.length - 1]; if (!a || !b) return '';
                 return x.r.shape === 'loop' || a.place === b.place ? 'Loop from ' + a.place : 'Into ' + a.place + ', out of ' + b.place; })())),
             row('Stops', '', stopList),
@@ -774,8 +827,8 @@
         }
         if (error) { fail(errText(error)); return; }
         // what they said they like, for "For you" ideas later (needs migration 006; skipped before it)
-        const ask = NT.request(st.ans, ctx()), prefs = { loves: ask.loves || [], fitness: ask.fitness || null, who: ask.who || null, pace: ask.pace || null };
-        if (prefs.loves.length || prefs.fitness) sb.from('trips').update({ prefs }).eq('id', data.id).then(x => { if (x && x.error) console.warn('preferences not saved', x.error.message); });
+        const ask = NT.request(st.ans, ctx()), prefs = { loves: ask.loves || [], fitness: ask.fitness || null, who: ask.who || null, pace: ask.pace || null, transport: ask.transport, noFly: ask.noFly };
+        if (prefs.loves.length || prefs.fitness || prefs.transport || prefs.noFly) sb.from('trips').update({ prefs }).eq('id', data.id).then(x => { if (x && x.error) console.warn('preferences not saved', x.error.message); });
         if (layout) {
           const rows = LAYOUT.toRows(layout);
           const r = await sb.rpc('apply_layout', { p_trip: data.id, p_expect: data.updated_at, p_phases: rows.phases, p_days: rows.days });

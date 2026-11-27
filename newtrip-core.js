@@ -20,6 +20,7 @@
     pace: [['Slow and immersive', '3+ nights per stop', 'slowly, 3+ nights per stop'], ['Balanced', '2–3 nights per stop', 'steadily, 2–3 nights per stop'],
       ['Fast-paced', '1–2 nights per stop', 'quickly, 1–2 nights per stop']],
     fitness: ['Casual walks', 'Day hikes', 'Multi-day treks', 'Big adventures'],
+    transport: [['Buses & trains', 'public'], ['Rental car', 'car'], ['Mix, fly the long hops', 'mix']],   // none picked: whatever fits
     shape: [['any', 'Don’t mind'], ['loop', 'Back where I started'], ['open', 'End somewhere else']],
     seasons: [['spring', 'Spring'], ['summer', 'Summer'], ['fall', 'Fall'], ['winter', 'Winter'], ['unsure', 'Not sure yet']]
   };
@@ -59,7 +60,8 @@
       who: one(ans.who), loves: many(ans.loves), pace: one(ans.pace), fitness: one(ans.fitness),
       when: ctx.exactDates ? null : whenText(ctx.seasons),
       from: one(ans.from), to: shape === 'loop' ? one(ans.from) : one(ans.to), shape,
-      must: filled(ans.must) ? [one(ans.must, 300)] : [], avoid: one(ans.avoid, 300)
+      must: filled(ans.must) ? [one(ans.must, 300)] : [], avoid: one(ans.avoid, 300),
+      transport: ['public', 'car', 'mix'].indexOf(ans.transport) >= 0 ? ans.transport : null, noFly: ans.noFly === true
     };
   }
 
@@ -159,6 +161,12 @@
   /* A new trip from a generated route fills in only the days that are fixed: getting there, the highlights
      (with the start and end of a multi-day one, e.g. "W Trek, 5 days"), and the last night. Every other line
      Claude wrote for a stop is kept as an idea for that stop, for later. Each filled day is marked auto. */
+  // "(~6 h, one bus a day, check locally)" after a travel line: Claude's rough hours and note, and anything the road check flagged
+  const legBits = s => { const b = [];
+    if (s.hours > 0) b.push('~' + (s.hours < 1 ? Math.round(s.hours * 60) + ' min' : (Math.round(s.hours * 2) / 2) + ' h'));
+    if (s.leg_note) b.push(tidy(s.leg_note).replace(/\.$/, ''));
+    if (s.leg_flag && !/check locally/i.test(s.leg_note || '')) b.push('check locally');
+    return b.length ? ' (' + b.join(', ') + ')' : ''; };
   const MULTI = /(?:,\s*|\s+|\()(\d{1,2})[- ]days?\b\)?|\b(\d{1,2})-day\b/i;
   function crucialPlans(phases, highlights) {
     const stops = []; (phases || []).forEach(p => (p.stops || []).forEach(s => stops.push(s)));
@@ -176,7 +184,7 @@
     stops.forEach((s, i) => {
       const n = Math.max(1, s.nights || 1), prev = stops[i - 1];
       const lines = Array.from({ length: n }, () => []);
-      lines[0].push(i === 0 ? 'Arrive in ' + s.place : (MODE_FROM[prev.next] || 'Travel from ') + prev.place);
+      lines[0].push(i === 0 ? 'Arrive in ' + s.place : (MODE_FROM[prev.next] || 'Travel from ') + prev.place + legBits(prev));
       const travel = lines[0].slice();
       const plansIn = (Array.isArray(s.plans) ? s.plans : []).map(tidy), stepsHere = plansIn.filter(t => t && isStep(t)).length >= 2;   // a trek stop with its days written out   // what a line mustn't repeat (the steps added below don't count)
       let next = n > 1 ? 1 : 0;                       // highlights start the day after arriving, when there is one
